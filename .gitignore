@@ -1,0 +1,7 @@
+**/.idea/
+**/.dolt/
+.vscode
+.run
+
+.DS_Store
+.sqlhistory
