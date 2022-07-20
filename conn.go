@@ -12,6 +12,11 @@ type DoltConn struct {
 }
 
 func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
+	_, err := d.se.GetUnderlyingEngine().PrepareQuery(d.SqlCtx, query)
+	if err != nil {
+		return nil, err
+	}
+
 	return &DoltStmt{
 		QueryStr: query,
 		se:       d.se,
@@ -24,5 +29,13 @@ func (d *DoltConn) Close() error {
 }
 
 func (d *DoltConn) Begin() (driver.Tx, error) {
-	return &DoltTx{}, nil
+	_, _, err := d.se.Query(d.SqlCtx, "BEGIN;")
+	if err != nil {
+		return nil, err
+	}
+
+	return &DoltTx{
+		se:     d.se,
+		sqlCtx: d.SqlCtx,
+	}, nil
 }

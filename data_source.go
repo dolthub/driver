@@ -21,7 +21,7 @@ func ParseDataSource(dataSource string) (*DoltDataSource, error) {
 	}
 
 	return &DoltDataSource{
-		Directory: u.Host,
+		Directory: u.Path,
 		Params:    u.Query(),
 	}, nil
 }

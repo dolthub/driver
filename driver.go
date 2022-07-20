@@ -55,7 +55,9 @@ func (d *DoltDriver) Open(dataSource string) (driver.Conn, error) {
 		env.UserNameKey:  username[0],
 		env.UserEmailKey: email[0],
 	})
-	mrEnv, err := env.MultiEnvForDirectory(ctx, cfg, fs, "0.40.17", true)
+
+	//mrEnv, err := env.MultiEnvForDirectory(ctx, cfg, fs, "0.40.17", true)
+	mrEnv, err := env.LoadMultiEnvFromDir(ctx, env.GetCurrentUserHomeDir, cfg, fs, ds.Directory, "0.40.17", true)
 	if err != nil {
 		return nil, err
 	}
@@ -64,6 +66,10 @@ func (d *DoltDriver) Open(dataSource string) (driver.Conn, error) {
 		IsReadOnly: false,
 		ServerUser: "root",
 		Autocommit: true,
+	}
+
+	if database, ok := ds.Params["database"]; ok && len(database) == 1 {
+		seCfg.InitialDb = database[0]
 	}
 
 	se, err := engine.NewSqlEngine(ctx, mrEnv, engine.FormatNull, seCfg)
