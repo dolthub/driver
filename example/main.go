@@ -1,79 +1,54 @@
 package main
 
 import (
-	"context"
-	"errors"
+	"database/sql"
 	"fmt"
-	"github.com/dolthub/dolt/go/libraries/utils/filesys"
-	"github.com/dolthub/embedded"
-	"github.com/dolthub/go-mysql-server/sql"
-	"io"
+	_ "github.com/dolthub/embedded"
 	"os"
 )
 
 func errExit(wrapFormat string, err error) {
-	if err != nil && err != io.EOF {
+	if err != nil {
 		fmt.Fprintf(os.Stderr, fmt.Errorf(wrapFormat, err).Error())
 		os.Exit(1)
 	}
 }
 
 func main() {
-	dir := os.Args[1]
-	ctx := context.Background()
-
-	dolt, err := embedded.NewEmbeddedDolt(ctx, filesys.LocalFS, dir, "Embedded User", "embedded@fake.horse")
-	errExit("failed to create embedded dolt instance: %w", err)
-	defer func() {
-		dolt.Close()
-	}()
-
-	rowCount := 0
-	countCallback := func(sch sql.Schema, rowIdx int, row sql.Row) error {
-		if rowIdx != 0 {
-			return errors.New("only a single row was expected but received multiple")
-		}
-
-		rowCount = int(row[0].(int64))
-		return nil
+	if len(os.Args) != 2 {
+		fmt.Println("usage: example file:///path/to/doltdb?username=<user_name>&email=<email>")
+		return
 	}
 
-	query(dolt, "CREATE DATABASE IF NOT EXISTS test;", nil)
-	query(dolt, "USE test;", nil)
-	query(dolt, "CREATE TABLE IF NOT EXISTS t1 (pk int primary key, c1 varchar(512));", nil)
-	query(dolt, "SELECT count(*) FROM t1;", countCallback)
+	dataSource := os.Args[1]
+	fmt.Println("Connecting to", dataSource)
 
-	if rowCount == 0 {
-		query(dolt, "INSERT INTO t1 VALUES (1, 'row 1'), (2, 'row 2'), (3, 'row 3');", nil)
-	}
+	db, err := sql.Open("dolt", dataSource)
+	errExit("failed to open database using the dolt driver: %w", err)
 
-	fmt.Println("pk, c1")
-	rowCallback := func(sch sql.Schema, rowIdx int, row sql.Row) error {
-		fmt.Printf("% 2d, %s\n", row[0].(int32), row[1].(string))
-		return nil
+	rows, err := db.Query("SHOW DATABASES;")
+	errExit("SHOW DATABASES query failed: %w", err)
+
+	printCols(rows)
+
+	var dbName string
+	for rows.Next() {
+		err = rows.Scan(&dbName)
+		errExit("scan failed: %w", err)
+		fmt.Println(dbName)
 	}
-	query(dolt, "SELECT * FROM t1 WHERE pk > 1", rowCallback)
 }
 
-func query(dolt *embedded.EmbeddedDolt, query string, cb func(sch sql.Schema, rowIdx int, row sql.Row) error) {
-	sch, ri, err := dolt.Query(query)
-	errExit(fmt.Sprintf("Failed to execute query '%s': %%w", query), err)
-	defer func() {
-		err := ri.Close(dolt.SqlCtx)
-		errExit("Failed to close row iterator: %w", err)
-	}()
+func printCols(rows *sql.Rows) {
+	cols, err := rows.Columns()
+	errExit("Failed to get columns: %w", err)
 
-	rowIdx := 0
-	next, err := ri.Next(dolt.SqlCtx)
-	errExit("Failed getting next now: %w", err)
-
-	for ; err == nil; rowIdx++ {
-		if cb != nil {
-			err := cb(sch, rowIdx, next)
-			errExit("failed processing row: %w", err)
-		}
-
-		next, err = ri.Next(dolt.SqlCtx)
-		errExit("Failed getting next row: %w", err)
+	colsStr := fmt.Sprint(cols)
+	separatorBytes := make([]byte, len(colsStr))
+	for i := range separatorBytes {
+		separatorBytes[i] = byte('-')
 	}
+
+	fmt.Println(colsStr)
+	fmt.Println(string(separatorBytes))
 }
