@@ -6,13 +6,13 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"fmt"
-	"github.com/dolthub/embedded"
-	_ "github.com/dolthub/embedded"
 	"os"
 	"reflect"
 	"strconv"
 	"strings"
 	"time"
+
+	_ "github.com/dolthub/driver"
 )
 
 func errExit(wrapFormat string, err error) {
@@ -28,7 +28,7 @@ func errExit(wrapFormat string, err error) {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("usage: example file:///path/to/doltdb?username=<user_name>&email=<email>&database=<database>")
+		fmt.Println("usage: example file:///path/to/doltdb?commitname=<user_name>&commitemail=<email>&database=<database>")
 		return
 	}
 
@@ -39,14 +39,28 @@ func main() {
 	db, err := sql.Open("dolt", dataSource)
 	errExit("failed to open database using the dolt driver: %w", err)
 
-	dn, _ := embedded.ParseDataSource(dataSource)
-	if _, ok := dn.Params["database"]; !ok {
-		err = printQuery(ctx, db, "CREATE DATABASE IF NOT EXISTS testdb;")
-		errExit("", err)
+	err = printQuery(ctx, db, "CREATE DATABASE IF NOT EXISTS testdb;")
+	errExit("", err)
 
-		err = printQuery(ctx, db, "USE testdb;")
-		errExit("", err)
-	}
+	err = printQuery(ctx, db, "USE testdb;")
+	errExit("", err)
+
+	printQuery(ctx, db, `CREATE TABLE IF NOT EXISTS t2(
+    pk int primary key auto_increment,
+    c1 varchar(32)
+)`)
+	errExit("", err)
+
+	printQuery(ctx, db, "SHOW TABLES;")
+
+	stmt, err := db.PrepareContext(ctx, "Insert into t2 (c1) values (?);")
+	errExit("", err)
+	defer stmt.Close()
+
+	result, err := stmt.ExecContext(ctx, "test")
+	errExit("", err)
+
+	fmt.Println(result.LastInsertId())
 
 	err = printQuery(ctx, db, `CREATE TABLE IF NOT EXISTS t1 (
 	pk int PRIMARY KEY,
@@ -98,7 +112,6 @@ func main() {
 
 	err = printQuery(ctx, db, "SELECT * FROM t1;")
 	errExit("", err)
-
 }
 
 type Queryable interface {
@@ -185,7 +198,8 @@ func printRows(rows *sql.Rows) error {
 				}
 			case []byte:
 				enc := base64.NewEncoder(base64.URLEncoding, result)
-				enc.Write(val)
+				_, err := enc.Write(val)
+				errExit("failed to base64 encode blob: %w", err)
 			case time.Time:
 				timeStr := val.Format(time.RFC3339)
 				result.WriteString(timeStr)
@@ -209,7 +223,7 @@ func prepareAndExec(ctx context.Context, prepable Preparable, query string, vals
 	}
 
 	for i := range vals {
-		result, err := stmt.Exec(vals[i]...)
+		result, err := stmt.ExecContext(ctx, vals[i]...)
 		if err != nil {
 			return fmt.Errorf("failed to execute prepared statement '%s' with parameters: %v - %w", query, vals[i], err)
 		}
@@ -222,13 +236,6 @@ func prepareAndExec(ctx context.Context, prepable Preparable, query string, vals
 		if affected != 1 {
 			return fmt.Errorf("expected '%s' to affect 1 row but it affected %d; params: %v - %w", query, affected, vals[i], err)
 		}
-
-		lastInsId, err := result.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("failed to get last insert id: %w", err)
-		}
-
-		fmt.Println(lastInsId)
 	}
 
 	return nil

@@ -13,14 +13,31 @@ import (
 	gms "github.com/dolthub/go-mysql-server/sql"
 )
 
+const (
+	DoltDriverName = "dolt"
+
+	CommitNameParam  = "commitname"
+	CommitEmailParam = "commitemail"
+	DatabaseParam    = "database"
+)
+
+var _ driver.Driver = (*doltDriver)(nil)
+
 func init() {
-	sql.Register("dolt", &DoltDriver{})
+	sql.Register(DoltDriverName, &doltDriver{})
 }
 
-type DoltDriver struct {
+// doltDriver is a driver.Driver implementation which provides access to a dolt database on the local filesystem
+type doltDriver struct {
 }
 
-func (d *DoltDriver) Open(dataSource string) (driver.Conn, error) {
+// Open opens and returns a connection to the datasource referenced by the string provided using the options provided.
+// datasources must be in file url format:
+//   file:///User/brian/driver/example/path?commitname=Billy%20Bob&commitemail=bb@gmail.com&database=dbname
+// The path needs to point to a directory whose subdirectories are dolt databases.  If a "Create Database" command is
+// run a new subdirectory will be created in this path.
+// The supported parameters are
+func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 	ctx := context.Background()
 	var fs filesys.Filesys = filesys.LocalFS
 
@@ -41,18 +58,18 @@ func (d *DoltDriver) Open(dataSource string) (driver.Conn, error) {
 		return nil, err
 	}
 
-	username := ds.Params["username"]
-	if username == nil {
-		return nil, fmt.Errorf("datasource '%s' must include the parameter 'username'", dataSource)
+	name := ds.Params[CommitNameParam]
+	if name == nil {
+		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitNameParam)
 	}
 
-	email := ds.Params["email"]
+	email := ds.Params[CommitEmailParam]
 	if email == nil {
-		return nil, fmt.Errorf("datasource '%s' must include the parameter 'email'", dataSource)
+		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitEmailParam)
 	}
 
 	cfg := config.NewMapConfig(map[string]string{
-		env.UserNameKey:  username[0],
+		env.UserNameKey:  name[0],
 		env.UserEmailKey: email[0],
 	})
 
@@ -68,7 +85,7 @@ func (d *DoltDriver) Open(dataSource string) (driver.Conn, error) {
 		Autocommit: true,
 	}
 
-	if database, ok := ds.Params["database"]; ok && len(database) == 1 {
+	if database, ok := ds.Params[DatabaseParam]; ok && len(database) == 1 {
 		seCfg.InitialDb = database[0]
 	}
 
@@ -77,14 +94,15 @@ func (d *DoltDriver) Open(dataSource string) (driver.Conn, error) {
 		return nil, err
 	}
 
-	sqlCtx, err := se.NewContext(ctx)
+	gmsCtx, err := se.NewContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	sqlCtx.Session.SetClient(gms.Client{User: "root", Address: "%", Capabilities: 0})
+	gmsCtx.Session.SetClient(gms.Client{User: "root", Address: "%", Capabilities: 0})
 	return &DoltConn{
-		se:     se,
-		SqlCtx: sqlCtx,
+		DataSource: ds,
+		se:         se,
+		gmsCtx:     gmsCtx,
 	}, nil
 }

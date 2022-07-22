@@ -6,19 +6,21 @@ import (
 	gms "github.com/dolthub/go-mysql-server/sql"
 )
 
-var _ driver.Tx = (*DoltTx)(nil)
+var _ driver.Tx = (*doltTx)(nil)
 
-type DoltTx struct {
-	sqlCtx *gms.Context
+type doltTx struct {
+	gmsCtx *gms.Context
 	se     *engine.SqlEngine
 }
 
-func (tx *DoltTx) Commit() error {
-	_, _, err := tx.se.Query(tx.sqlCtx, "COMMIT;")
+// Commit finishes the transaction.
+func (tx *doltTx) Commit() error {
+	_, _, err := tx.se.Query(tx.gmsCtx, "COMMIT;")
 	return err
 }
 
-func (tx *DoltTx) Rollback() error {
-	_, _, err := tx.se.Query(tx.sqlCtx, "ROLLBACK;")
+// Rollback cancels the transaction.
+func (tx *doltTx) Rollback() error {
+	_, _, err := tx.se.Query(tx.gmsCtx, "ROLLBACK;")
 	return err
 }

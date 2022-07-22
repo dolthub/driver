@@ -2,7 +2,6 @@ package embedded
 
 import (
 	"database/sql/driver"
-	"errors"
 	"fmt"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
@@ -11,19 +10,21 @@ import (
 	"time"
 )
 
-var _ driver.Stmt = (*DoltStmt)(nil)
+var _ driver.Stmt = (*doltStmt)(nil)
 
-type DoltStmt struct {
-	se       *engine.SqlEngine
-	SqlCtx   *gms.Context
-	QueryStr string
+type doltStmt struct {
+	se     *engine.SqlEngine
+	gmsCtx *gms.Context
+	query  string
 }
 
-func (stmt *DoltStmt) Close() error {
+// Close closes the statement.
+func (stmt *doltStmt) Close() error {
 	return nil
 }
 
-func (stmt *DoltStmt) NumInput() int {
+// NumInput returns the number of placeholder parameters.
+func (stmt *doltStmt) NumInput() int {
 	return -1
 }
 
@@ -78,33 +79,48 @@ func argsToBindings(args []driver.Value) (map[string]gms.Expression, error) {
 	return bindings, nil
 }
 
-func (stmt *DoltStmt) Exec(args []driver.Value) (driver.Result, error) {
-	bindings, err := argsToBindings(args)
+// Exec executes a query that doesn't return rows, such as an INSERT or UPDATE.
+func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
+	sch, itr, err := stmt.execWithArgs(args)
 	if err != nil {
 		return nil, err
 	}
 
-	sch, itr, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.SqlCtx, stmt.QueryStr, bindings)
-	if err != nil {
-		return nil, err
-	}
-
-	return NewResult(stmt.SqlCtx, sch, itr), nil
+	return newResult(stmt.gmsCtx, sch, itr), nil
 }
 
-func (stmt *DoltStmt) Query(args []driver.Value) (driver.Rows, error) {
-	if len(args) != 0 {
-		return nil, errors.New("not implemented")
+func (stmt *doltStmt) execWithArgs(args []driver.Value) (gms.Schema, gms.RowIter, error) {
+	bindings, err := argsToBindings(args)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	sch, rowIter, err := stmt.se.Query(stmt.SqlCtx, stmt.QueryStr)
+	sch, itr, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.gmsCtx, stmt.query, bindings)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sch, itr, nil
+}
+
+// Query executes a query that may return rows, such as a SELECT
+func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
+	var sch gms.Schema
+	var rowIter gms.RowIter
+	var err error
+
+	if len(args) != 0 {
+		sch, rowIter, err = stmt.execWithArgs(args)
+	} else {
+		sch, rowIter, err = stmt.se.Query(stmt.gmsCtx, stmt.query)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
-	return &DoltRows{
-		Schema:  sch,
-		RowIter: rowIter,
-		SqlCtx:  stmt.SqlCtx,
+	return &doltRows{
+		sch:     sch,
+		rowIter: rowIter,
+		gmsCtx:  stmt.gmsCtx,
 	}, nil
 }

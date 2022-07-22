@@ -1,4 +1,4 @@
-module github.com/dolthub/embedded
+module github.com/dolthub/driver
 
 go 1.18
 
