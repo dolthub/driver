@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
@@ -73,8 +74,7 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		env.UserEmailKey: email[0],
 	})
 
-	//mrEnv, err := env.MultiEnvForDirectory(ctx, cfg, fs, "0.40.17", true)
-	mrEnv, err := env.LoadMultiEnvFromDir(ctx, env.GetCurrentUserHomeDir, cfg, fs, ds.Directory, "0.40.17", true)
+	mrEnv, err := LoadMultiEnvFromDir(ctx, env.GetCurrentUserHomeDir, cfg, fs, ds.Directory, "0.40.17")
 	if err != nil {
 		return nil, err
 	}
@@ -105,4 +105,28 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		se:         se,
 		gmsCtx:     gmsCtx,
 	}, nil
+}
+
+// LoadMultiEnvFromDir looks at each subfolder of the given path as a Dolt repository and attempts to return a MultiRepoEnv
+// with initialized environments for each of those subfolder data repositories. subfolders whose name starts with '.' are
+// skipped.
+func LoadMultiEnvFromDir(
+	ctx context.Context,
+	hdp env.HomeDirProvider,
+	cfg config.ReadWriteConfig,
+	fs filesys.Filesys,
+	path, version string,
+) (*env.MultiRepoEnv, error) {
+	envNamesAndPaths, err := env.DBNamesAndPathsFromDir(fs, path)
+
+	if err != nil {
+		return nil, err
+	}
+
+	multiDbDirFs, err := fs.WithWorkingDir(path)
+	if err != nil {
+		return nil, errhand.VerboseErrorFromError(err)
+	}
+
+	return env.MultiEnvForPaths(ctx, hdp, cfg, multiDbDirFs, version, true, envNamesAndPaths...)
 }
