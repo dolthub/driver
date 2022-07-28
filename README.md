@@ -38,7 +38,7 @@ _ "github.com/dolthub/driver"
 Then we will open a connection to the database:
 
 ```go
-db, err := sql.Open("dolt", "file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename)
+db, err := sql.Open("dolt", "file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename")
 ```
 
 Now you can use your `db` as you would normally, however you have access to all of dolt's special features as well. 
@@ -53,3 +53,7 @@ commitname - The name of the committer seen in the dolt commit log
 commitemail - The email of the committer seen in the dolt commit log
 database - The initial database to connect to
 ```
+
+#### Example DSN
+
+`file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename`
