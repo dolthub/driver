@@ -115,8 +115,7 @@ func LoadMultiEnvFromDir(
 	hdp env.HomeDirProvider,
 	cfg config.ReadWriteConfig,
 	fs filesys.Filesys,
-	path, version string,
-) (*env.MultiRepoEnv, error) {
+	path, version string) (*env.MultiRepoEnv, error) {
 	envNamesAndPaths, err := env.DBNamesAndPathsFromDir(fs, path)
 
 	if err != nil {

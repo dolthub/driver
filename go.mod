@@ -3,8 +3,8 @@ module github.com/dolthub/driver
 go 1.18
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20220726183001-6c458cc80d15
-	github.com/dolthub/go-mysql-server v0.12.1-0.20220726021412-60dcca3a24be
+	github.com/dolthub/dolt/go v0.40.5-0.20220729182040-b83b8e9b0300
+	github.com/dolthub/go-mysql-server v0.12.1-0.20220728202257-cd27ab81b097
 )
 
 require (
