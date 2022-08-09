@@ -35,3 +35,8 @@ func ParseDataSource(dataSource string) (*DoltDataSource, error) {
 		Params:    lowerParams,
 	}, nil
 }
+
+func (ds *DoltDataSource) ParamIsTrue(paramName string) bool {
+	values, ok := ds.Params[paramName]
+	return ok && len(values) == 1 && strings.ToLower(values[0]) == "true"
+}

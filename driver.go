@@ -5,9 +5,8 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
-
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
+	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
@@ -17,9 +16,10 @@ import (
 const (
 	DoltDriverName = "dolt"
 
-	CommitNameParam  = "commitname"
-	CommitEmailParam = "commitemail"
-	DatabaseParam    = "database"
+	CommitNameParam      = "commitname"
+	CommitEmailParam     = "commitemail"
+	DatabaseParam        = "database"
+	MultiStatementsParam = "multistatements"
 )
 
 var _ driver.Driver = (*doltDriver)(nil)
@@ -34,7 +34,9 @@ type doltDriver struct {
 
 // Open opens and returns a connection to the datasource referenced by the string provided using the options provided.
 // datasources must be in file url format:
-//   file:///User/brian/driver/example/path?commitname=Billy%20Bob&commitemail=bb@gmail.com&database=dbname
+//
+//	file:///User/brian/driver/example/path?commitname=Billy%20Bob&commitemail=bb@gmail.com&database=dbname
+//
 // The path needs to point to a directory whose subdirectories are dolt databases.  If a "Create Database" command is
 // run a new subdirectory will be created in this path.
 // The supported parameters are

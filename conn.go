@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
+	"io"
 )
 
 var _ driver.Conn = (*DoltConn)(nil)
@@ -20,6 +21,47 @@ type DoltConn struct {
 
 // Prepare returns a prepared statement, bound to this connection.
 func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
+	multiStatements := d.DataSource.ParamIsTrue(MultiStatementsParam)
+
+	if multiStatements {
+		qs := NewQuerySplitter(query)
+		current, err := qs.Next()
+		if err != io.EOF && err != nil {
+			return nil, err
+		}
+
+		for {
+			if !qs.HasMore() {
+				break
+			}
+			d.se.GetUnderlyingEngine()
+
+			err = func() error {
+				_, rowIter, err := d.se.Query(d.gmsCtx, current)
+				defer rowIter.Close(d.gmsCtx)
+
+				if err != nil {
+					return err
+				}
+
+				for {
+					_, err := rowIter.Next(d.gmsCtx)
+					if err == io.EOF {
+						break
+					} else if err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}()
+
+			current, err = qs.Next()
+		}
+
+		query = current
+	}
+
 	_, err := d.se.GetUnderlyingEngine().PrepareQuery(d.gmsCtx, query)
 	if err != nil {
 		return nil, err
