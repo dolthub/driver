@@ -76,7 +76,12 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 
 // Close releases the resources held by the DoltConn instance
 func (d *DoltConn) Close() error {
-	return d.se.Close()
+	err := d.se.Close()
+	if err != context.Canceled {
+		return err
+	}
+
+	return nil
 }
 
 // Begin starts and returns a new transaction.
