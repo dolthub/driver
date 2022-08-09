@@ -38,11 +38,10 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 
 			err = func() error {
 				_, rowIter, err := d.se.Query(d.gmsCtx, current)
-				defer rowIter.Close(d.gmsCtx)
-
 				if err != nil {
 					return err
 				}
+				defer rowIter.Close(d.gmsCtx)
 
 				for {
 					_, err := rowIter.Next(d.gmsCtx)
