@@ -86,7 +86,12 @@ func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
 		return nil, err
 	}
 
-	return newResult(stmt.gmsCtx, sch, itr), nil
+	res := newResult(stmt.gmsCtx, sch, itr)
+	if res.err != nil {
+		return nil, res.err
+	}
+
+	return res, nil
 }
 
 func (stmt *doltStmt) execWithArgs(args []driver.Value) (gms.Schema, gms.RowIter, error) {
