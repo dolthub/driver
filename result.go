@@ -28,10 +28,10 @@ func newResult(gmsCtx *gms.Context, sch gms.Schema, rowItr gms.RowIter) *doltRes
 			}
 			break
 		}
-		affected++
 
 		for i := range r {
 			if res, ok := r[i].(gms.OkResult); ok {
+				affected += int64(res.RowsAffected)
 				last = int64(res.InsertID)
 			}
 		}
