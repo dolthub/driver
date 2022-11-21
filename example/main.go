@@ -28,7 +28,7 @@ func errExit(wrapFormat string, err error) {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("usage: example file:///path/to/doltdb?commitname=<user_name>&commitemail=<email>&database=<database>")
+		fmt.Println("usage: example file:///path/to/doltdb?commitname=<user_name>&commitemail=<email>&database=<database>&multistatements=<true|false>")
 		return
 	}
 
@@ -39,7 +39,7 @@ func main() {
 	db, err := sql.Open("dolt", dataSource)
 	errExit("failed to open database using the dolt driver: %w", err)
 
-	err = printQuery(ctx, db, "CREATE DATABASE IF NOT EXISTS testdb;")
+	err = printQuery(ctx, db, "CREATE DATABASE IF NOT EXISTS testdb;USE testdb;")
 	errExit("", err)
 
 	err = printQuery(ctx, db, "USE testdb;")
@@ -98,6 +98,10 @@ func main() {
 
 	err = prepareAndExec(ctx, tx, "INSERT INTO t1 VALUES (?, ?, ?, ?, ?)", rows)
 	errExit("", err)
+
+	err = printQuery(ctx, tx, `INSERT INTO t1 VALUES (5, "blah", 4.0, 0, now());
+INSERT INTO t1 VALUES (6, 'aoeu', 7.0, 1, now()), (7,"aoeu aoeu", 8.1, 0, now());
+SELECT * FROM t1;`)
 
 	fmt.Println("Query Before Rollback")
 	err = printQuery(ctx, tx, "SELECT * FROM t1;")
