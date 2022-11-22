@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
+	"github.com/google/uuid"
 	"io"
 )
 
@@ -39,10 +40,11 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 			err = func() error {
 				_, rowIter, err := d.se.Query(d.gmsCtx, current)
 				if err != nil {
+					fmt.Println("DUSTIN: MULTISTATEMENT QUERY: err:", err.Error())
 					return err
 				}
 				defer rowIter.Close(d.gmsCtx)
-
+				fmt.Println("DUSTIN: MULTISTATEMENT QUERY: query:", current)
 				for {
 					_, err := rowIter.Next(d.gmsCtx)
 					if err == io.EOF {
@@ -63,8 +65,10 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 
 	_, err := d.se.GetUnderlyingEngine().PrepareQuery(d.gmsCtx, query)
 	if err != nil {
+		fmt.Println("DUSTIN: PREPARE QUERY: err:", err.Error())
 		return nil, err
 	}
+	fmt.Println("DUSTIN: PREPARE QUERY: query:", query)
 
 	return &doltStmt{
 		query:  query,
@@ -75,8 +79,10 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 
 // Close releases the resources held by the DoltConn instance
 func (d *DoltConn) Close() error {
+	fmt.Println("DUSTIN: CLOSE DOLT CONN")
 	err := d.se.Close()
 	if err != context.Canceled {
+		fmt.Println("DUSTIN: CLOSE DOLT CONN:", err.Error())
 		return err
 	}
 
@@ -100,12 +106,21 @@ func (d *DoltConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 		return nil, fmt.Errorf("isolation level not supported '%d'", opts.Isolation)
 	}
 
-	_, _, err := d.se.Query(d.gmsCtx, "BEGIN;")
+	id, err := uuid.NewRandom()
 	if err != nil {
 		return nil, err
 	}
 
+	//fmt.Println("DUSTIN: ISOLATION LEVEL is sql.LevelSerializable:", opts.Isolation == driver.IsolationLevel(sql.LevelSerializable))
+	fmt.Println("DUSTIN: BEGIN TX: id:", id.String())
+	_, _, err = d.se.Query(d.gmsCtx, "BEGIN;")
+	if err != nil {
+		fmt.Println("DUSTIN: BEGIN TX: err:", err.Error())
+		return nil, err
+	}
+
 	return &doltTx{
+		id:     id.String(),
 		se:     d.se,
 		gmsCtx: d.gmsCtx,
 	}, nil
