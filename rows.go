@@ -3,6 +3,7 @@ package embedded
 import (
 	"database/sql/driver"
 	"errors"
+	"fmt"
 	gms "github.com/dolthub/go-mysql-server/sql"
 )
 
@@ -47,7 +48,17 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 	}
 
 	for i := range nextRow {
-		dest[i] = nextRow[i]
+		src := nextRow[i]
+		switch v := nextRow[i].(type) {
+		case gms.JSONDocument:
+			src, err = v.Value()
+		}
+
+		if err != nil {
+			return fmt.Errorf("error processing column %d: %w", i, err)
+		}
+
+		dest[i] = src
 	}
 
 	return nil
