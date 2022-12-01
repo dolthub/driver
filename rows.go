@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	gms "github.com/dolthub/go-mysql-server/sql"
+	"io"
 )
 
 var _ driver.Rows = (*doltRows)(nil)
@@ -32,7 +33,7 @@ func (rows *doltRows) Columns() []string {
 
 // Close closes the rows iterator.
 func (rows *doltRows) Close() error {
-	return rows.rowIter.Close(rows.gmsCtx)
+	return translateError(rows.rowIter.Close(rows.gmsCtx))
 }
 
 // Next is called to populate the next row of data into the provided slice. The provided slice will be the same size as
@@ -40,7 +41,10 @@ func (rows *doltRows) Close() error {
 func (rows *doltRows) Next(dest []driver.Value) error {
 	nextRow, err := rows.rowIter.Next(rows.gmsCtx)
 	if err != nil {
-		return err
+		if err == io.EOF {
+			return io.EOF
+		}
+		return translateError(err)
 	}
 
 	if len(dest) != len(nextRow) {
@@ -50,7 +54,7 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 	for i := range nextRow {
 		if v, ok := nextRow[i].(driver.Valuer); ok {
 			dest[i], err = v.Value()
-		
+
 			if err != nil {
 				return fmt.Errorf("error processing column %d: %w", i, err)
 			}

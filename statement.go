@@ -83,7 +83,7 @@ func argsToBindings(args []driver.Value) (map[string]gms.Expression, error) {
 func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
 	sch, itr, err := stmt.execWithArgs(args)
 	if err != nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 
 	res := newResult(stmt.gmsCtx, sch, itr)
@@ -120,7 +120,7 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 	}
 
 	if err != nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 
 	return &doltRows{

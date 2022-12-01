@@ -27,7 +27,7 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 		qs := NewQuerySplitter(query)
 		current, err := qs.Next()
 		if err != io.EOF && err != nil {
-			return nil, err
+			return nil, translateError(err)
 		}
 
 		for {
@@ -39,7 +39,7 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 			err = func() error {
 				_, rowIter, err := d.se.Query(d.gmsCtx, current)
 				if err != nil {
-					return err
+					return translateError(err)
 				}
 				defer rowIter.Close(d.gmsCtx)
 
@@ -48,14 +48,20 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 					if err == io.EOF {
 						break
 					} else if err != nil {
-						return err
+						return translateError(err)
 					}
 				}
 
 				return nil
 			}()
+			if err != nil {
+				return nil, err
+			}
 
 			current, err = qs.Next()
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		query = current
@@ -63,7 +69,7 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 
 	_, err := d.se.GetUnderlyingEngine().PrepareQuery(d.gmsCtx, query)
 	if err != nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 
 	return &doltStmt{
@@ -102,7 +108,7 @@ func (d *DoltConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 
 	_, _, err := d.se.Query(d.gmsCtx, "BEGIN;")
 	if err != nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 
 	return &doltTx{

@@ -5,6 +5,7 @@ go 1.19
 require (
 	github.com/dolthub/dolt/go v0.40.5-0.20221201193151-0caa2c8b08cc
 	github.com/dolthub/go-mysql-server v0.14.1-0.20221201171101-4911840d38a4
+	github.com/go-sql-driver/mysql v1.6.0
 	github.com/stretchr/testify v1.8.0
 )
 
@@ -27,7 +28,6 @@ require (
 	github.com/go-kit/kit v0.10.0 // indirect
 	github.com/go-logr/logr v1.2.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
-	github.com/go-sql-driver/mysql v1.6.0 // indirect
 	github.com/gocraft/dbr/v2 v2.7.2 // indirect
 	github.com/golang/groupcache v0.0.0-20200121045136-8c9f03a8e57e // indirect
 	github.com/golang/protobuf v1.5.2 // indirect
