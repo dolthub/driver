@@ -48,17 +48,15 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 	}
 
 	for i := range nextRow {
-		src := nextRow[i]
-		switch v := nextRow[i].(type) {
-		case gms.JSONDocument:
-			src, err = v.Value()
+		if v, ok := nextRow[i].(driver.Valuer); ok {
+			dest[i], err = v.Value()
+		} else {
+			dest[i] = nextRow[i]
 		}
 
 		if err != nil {
 			return fmt.Errorf("error processing column %d: %w", i, err)
 		}
-
-		dest[i] = src
 	}
 
 	return nil
