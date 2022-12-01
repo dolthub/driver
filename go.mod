@@ -1,10 +1,10 @@
 module github.com/dolthub/driver
 
-go 1.18
+go 1.19
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20221201174849-f8462b78a542
-	github.com/dolthub/go-mysql-server v0.14.1-0.20221130022253-596303f1d7f5
+	github.com/dolthub/dolt/go v0.40.5-0.20221201193151-0caa2c8b08cc
+	github.com/dolthub/go-mysql-server v0.14.1-0.20221201171101-4911840d38a4
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/stretchr/testify v1.8.0
 )
