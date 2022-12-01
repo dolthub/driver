@@ -50,12 +50,12 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 	for i := range nextRow {
 		if v, ok := nextRow[i].(driver.Valuer); ok {
 			dest[i], err = v.Value()
+		
+			if err != nil {
+				return fmt.Errorf("error processing column %d: %w", i, err)
+			}
 		} else {
 			dest[i] = nextRow[i]
-		}
-
-		if err != nil {
-			return fmt.Errorf("error processing column %d: %w", i, err)
 		}
 	}
 
