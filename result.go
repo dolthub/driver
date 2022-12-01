@@ -24,7 +24,7 @@ func newResult(gmsCtx *gms.Context, sch gms.Schema, rowItr gms.RowIter) *doltRes
 		r, err := rowItr.Next(gmsCtx)
 		if err != nil {
 			if err != io.EOF {
-				resultErr = err
+				resultErr = translateError(err)
 			}
 			break
 		}
