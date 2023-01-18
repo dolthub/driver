@@ -3,8 +3,8 @@ module github.com/dolthub/driver
 go 1.19
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20221201193151-0caa2c8b08cc
-	github.com/dolthub/go-mysql-server v0.14.1-0.20221201171101-4911840d38a4
+	github.com/dolthub/dolt/go v0.40.5-0.20230117235533-b8b3d3f8632d
+	github.com/dolthub/go-mysql-server v0.14.1-0.20230117235052-138dba63dcd1
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/stretchr/testify v1.8.0
 )
@@ -14,7 +14,7 @@ require (
 	cloud.google.com/go/storage v1.12.0 // indirect
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2 // indirect
 	github.com/aliyun/aliyun-oss-go-sdk v2.2.5+incompatible // indirect
-	github.com/aws/aws-sdk-go v1.32.6 // indirect
+	github.com/aws/aws-sdk-go v1.33.0 // indirect
 	github.com/bcicen/jstream v1.0.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.1.3 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
@@ -22,7 +22,7 @@ require (
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi v0.0.0-20201005193433-3ee972b1d078 // indirect
 	github.com/dolthub/fslock v0.0.3 // indirect
-	github.com/dolthub/vitess v0.0.0-20221128235342-e80b37ceed86 // indirect
+	github.com/dolthub/vitess v0.0.0-20230111093229-dbe40c6c22d1 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/go-kit/kit v0.10.0 // indirect
