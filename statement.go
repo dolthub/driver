@@ -41,7 +41,7 @@ func argsToBindings(args []driver.Value) (map[string]gms.Expression, error) {
 		case nil:
 			expr = nil
 		case string:
-			expr = expression.NewLiteral(val, gms.LongText)
+			expr = expression.NewLiteral(val, types.LongText)
 		case int:
 			expr = expression.NewLiteral(int64(val), types.Int64)
 		case int8:
@@ -69,7 +69,7 @@ func argsToBindings(args []driver.Value) (map[string]gms.Expression, error) {
 		case bool:
 			expr = expression.NewLiteral(val, types.Boolean)
 		case []byte:
-			expr = expression.NewLiteral(val, gms.Blob)
+			expr = expression.NewLiteral(val, types.Blob)
 		case time.Time:
 			expr = expression.NewLiteral(val, types.Time)
 		default:
