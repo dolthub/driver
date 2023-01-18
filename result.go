@@ -4,7 +4,9 @@ import (
 	"io"
 
 	"database/sql/driver"
+
 	gms "github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/go-mysql-server/sql/types"
 )
 
 var _ driver.Result = (*doltResult)(nil)
@@ -30,7 +32,7 @@ func newResult(gmsCtx *gms.Context, sch gms.Schema, rowItr gms.RowIter) *doltRes
 		}
 
 		for i := range r {
-			if res, ok := r[i].(gms.OkResult); ok {
+			if res, ok := r[i].(types.OkResult); ok {
 				affected += int64(res.RowsAffected)
 				last = int64(res.InsertID)
 			}

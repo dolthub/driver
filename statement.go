@@ -3,9 +3,12 @@ package embedded
 import (
 	"database/sql/driver"
 	"fmt"
+
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/go-mysql-server/sql/expression"
+	"github.com/dolthub/go-mysql-server/sql/types"
+
 	"strconv"
 	"time"
 )
@@ -38,37 +41,37 @@ func argsToBindings(args []driver.Value) (map[string]gms.Expression, error) {
 		case nil:
 			expr = nil
 		case string:
-			expr = expression.NewLiteral(val, gms.LongText)
+			expr = expression.NewLiteral(val, types.LongText)
 		case int:
-			expr = expression.NewLiteral(int64(val), gms.Int64)
+			expr = expression.NewLiteral(int64(val), types.Int64)
 		case int8:
-			expr = expression.NewLiteral(val, gms.Int8)
+			expr = expression.NewLiteral(val, types.Int8)
 		case int16:
-			expr = expression.NewLiteral(val, gms.Int16)
+			expr = expression.NewLiteral(val, types.Int16)
 		case int32:
-			expr = expression.NewLiteral(val, gms.Int32)
+			expr = expression.NewLiteral(val, types.Int32)
 		case int64:
-			expr = expression.NewLiteral(val, gms.Int64)
+			expr = expression.NewLiteral(val, types.Int64)
 		case uint:
-			expr = expression.NewLiteral(uint64(val), gms.Uint64)
+			expr = expression.NewLiteral(uint64(val), types.Uint64)
 		case uint8:
-			expr = expression.NewLiteral(val, gms.Uint8)
+			expr = expression.NewLiteral(val, types.Uint8)
 		case uint16:
-			expr = expression.NewLiteral(val, gms.Uint16)
+			expr = expression.NewLiteral(val, types.Uint16)
 		case uint32:
-			expr = expression.NewLiteral(val, gms.Uint32)
+			expr = expression.NewLiteral(val, types.Uint32)
 		case uint64:
-			expr = expression.NewLiteral(val, gms.Uint64)
+			expr = expression.NewLiteral(val, types.Uint64)
 		case float32:
-			expr = expression.NewLiteral(val, gms.Float32)
+			expr = expression.NewLiteral(val, types.Float32)
 		case float64:
-			expr = expression.NewLiteral(val, gms.Float64)
+			expr = expression.NewLiteral(val, types.Float64)
 		case bool:
-			expr = expression.NewLiteral(val, gms.Boolean)
+			expr = expression.NewLiteral(val, types.Boolean)
 		case []byte:
-			expr = expression.NewLiteral(val, gms.Blob)
+			expr = expression.NewLiteral(val, types.Blob)
 		case time.Time:
-			expr = expression.NewLiteral(val, gms.Time)
+			expr = expression.NewLiteral(val, types.Time)
 		default:
 			return nil, fmt.Errorf("argument is an unsupported type: '%v'", args[i])
 		}
