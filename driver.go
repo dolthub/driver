@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
-	gms "github.com/dolthub/go-mysql-server/sql"
 )
 
 const (
@@ -76,7 +76,7 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		env.UserEmailKey: email[0],
 	})
 
-	mrEnv, err := LoadMultiEnvFromDir(ctx, env.GetCurrentUserHomeDir, cfg, fs, ds.Directory, "0.40.17")
+	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ds.Directory, "0.40.17")
 	if err != nil {
 		return nil, err
 	}
@@ -86,22 +86,20 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		ServerUser: "root",
 		Autocommit: true,
 	}
-
-	if database, ok := ds.Params[DatabaseParam]; ok && len(database) == 1 {
-		seCfg.InitialDb = database[0]
-	}
-
+	
 	se, err := engine.NewSqlEngine(ctx, mrEnv, engine.FormatNull, seCfg)
 	if err != nil {
 		return nil, err
 	}
 
-	gmsCtx, err := se.NewContext(ctx)
+	gmsCtx, err := se.NewLocalContext(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if database, ok := ds.Params[DatabaseParam]; ok && len(database) == 1 {
+		gmsCtx.SetCurrentDatabase(database[0])
+	}
 
-	gmsCtx.Session.SetClient(gms.Client{User: "root", Address: "%", Capabilities: 0})
 	return &DoltConn{
 		DataSource: ds,
 		se:         se,
@@ -113,21 +111,16 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 // with initialized environments for each of those subfolder data repositories. subfolders whose name starts with '.' are
 // skipped.
 func LoadMultiEnvFromDir(
-	ctx context.Context,
-	hdp env.HomeDirProvider,
-	cfg config.ReadWriteConfig,
-	fs filesys.Filesys,
-	path, version string) (*env.MultiRepoEnv, error) {
-	envNamesAndPaths, err := env.DBNamesAndPathsFromDir(fs, path)
-
-	if err != nil {
-		return nil, err
-	}
+		ctx context.Context,
+		cfg config.ReadWriteConfig,
+		fs filesys.Filesys,
+		path, version string,
+) (*env.MultiRepoEnv, error) {
 
 	multiDbDirFs, err := fs.WithWorkingDir(path)
 	if err != nil {
 		return nil, errhand.VerboseErrorFromError(err)
 	}
-
-	return env.MultiEnvForPaths(ctx, hdp, cfg, multiDbDirFs, version, true, envNamesAndPaths...)
+	
+	return env.MultiEnvForDirectory(ctx, cfg, multiDbDirFs, version, true, nil)
 }
