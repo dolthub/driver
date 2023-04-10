@@ -116,6 +116,8 @@ github.com/denisenkom/go-mssqldb v0.10.0/go.mod h1:xbL0rPBG9cCiLr28tMa8zpbdarY27
 github.com/dgrijalva/jwt-go v3.2.0+incompatible/go.mod h1:E3ru+11k8xSBh+hMPgOLZmtrrCbhqsmaPHjLKYnJCaQ=
 github.com/dolthub/dolt/go v0.40.5-0.20230410172243-471835e186c1 h1:rMh0HvUJsnDWh7/GzffjGwgE9D7KgsvN1+mbLjV4cDQ=
 github.com/dolthub/dolt/go v0.40.5-0.20230410172243-471835e186c1/go.mod h1:lnedp9n2O2I5b0f54PzjqwA0s2Bl+uo6uRS3R/A63BM=
+github.com/dolthub/dolt/go v0.40.5-0.20230410221826-1f7ed876da28 h1:D6JBiAyRBgSOhSzSPpM8ktX7tzSFOCZ5UgeTqQF+hBg=
+github.com/dolthub/dolt/go v0.40.5-0.20230410221826-1f7ed876da28/go.mod h1:lnedp9n2O2I5b0f54PzjqwA0s2Bl+uo6uRS3R/A63BM=
 github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi v0.0.0-20201005193433-3ee972b1d078 h1:nrkoh/RcgTq5EsWTcbSBF8KQghCtM+1dhyslghbBoj8=
 github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi v0.0.0-20201005193433-3ee972b1d078/go.mod h1:8Jdiq6CVg8HM4n9fF17sGgXUpFa98zDyscW0A7OQmuM=
 github.com/dolthub/flatbuffers v1.13.0-dh.1 h1:OWJdaPep22N52O/0xsUevxJ6Qfw1M2txCjZPOdjXybE=
