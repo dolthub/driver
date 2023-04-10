@@ -82,10 +82,11 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 // Close releases the resources held by the DoltConn instance
 func (d *DoltConn) Close() error {
 	err := d.se.Close()
-	if err != context.Canceled {
-		return err
+	if err != nil {
+		if err != context.Canceled {
+			return err
+		}
 	}
-
 	return nil
 }
 
