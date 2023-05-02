@@ -3,7 +3,7 @@ module github.com/dolthub/driver
 go 1.19
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20230410221826-1f7ed876da28
+	github.com/dolthub/dolt/go v0.40.5-0.20230428231738-9712393a4428
 	github.com/dolthub/go-mysql-server v0.14.1-0.20230407214800-c77ed0254fb9
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/stretchr/testify v1.8.1
