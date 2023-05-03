@@ -3,8 +3,8 @@ module github.com/dolthub/driver
 go 1.19
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20230428231738-9712393a4428
-	github.com/dolthub/go-mysql-server v0.14.1-0.20230407214800-c77ed0254fb9
+	github.com/dolthub/dolt/go v0.40.5-0.20230503211923-08f2ebf472f2
+	github.com/dolthub/go-mysql-server v0.15.1-0.20230503194825-6ce2628d02fc
 	github.com/go-sql-driver/mysql v1.6.0
 	github.com/stretchr/testify v1.8.1
 )
@@ -21,7 +21,9 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi v0.0.0-20201005193433-3ee972b1d078 // indirect
+	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/fslock v0.0.3 // indirect
+	github.com/dolthub/jsonpath v0.0.1 // indirect
 	github.com/dolthub/maphash v0.0.0-20221220182448-74e1e1ea1577 // indirect
 	github.com/dolthub/swiss v0.1.0 // indirect
 	github.com/dolthub/vitess v0.0.0-20230407173322-ae1622f38e94 // indirect
@@ -59,6 +61,10 @@ require (
 	github.com/shopspring/decimal v1.2.0 // indirect
 	github.com/silvasur/buzhash v0.0.0-20160816060738-9bdec3dec7c6 // indirect
 	github.com/sirupsen/logrus v1.8.1 // indirect
+	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/vbauerster/mpb/v8 v8.0.2 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opencensus.io v0.22.4 // indirect
