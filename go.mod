@@ -3,8 +3,9 @@ module github.com/dolthub/driver
 go 1.19
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20230817060035-80e1a646b0fb
-	github.com/dolthub/go-mysql-server v0.16.1-0.20230817011537-fac838d6f846
+	github.com/dolthub/dolt/go v0.40.5-0.20230824221934-83da423c3547
+	github.com/dolthub/go-mysql-server v0.17.1-0.20230824203610-571db50cd7d9
+	github.com/dolthub/vitess v0.0.0-20230823204737-4a21a94e90c3
 	github.com/go-sql-driver/mysql v1.7.2-0.20230713085235-0b18dac46f7f
 	github.com/stretchr/testify v1.8.2
 )
@@ -31,7 +32,6 @@ require (
 	github.com/dolthub/jsonpath v0.0.2-0.20230525180605-8dc13778fd72 // indirect
 	github.com/dolthub/maphash v0.0.0-20221220182448-74e1e1ea1577 // indirect
 	github.com/dolthub/swiss v0.1.0 // indirect
-	github.com/dolthub/vitess v0.0.0-20230815195949-02f159e126f9 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/go-kit/kit v0.10.0 // indirect
@@ -86,6 +86,7 @@ require (
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect
 	golang.org/x/crypto v0.11.0 // indirect
+	golang.org/x/exp v0.0.0-20230522175609-2e198f4a06a1 // indirect
 	golang.org/x/mod v0.8.0 // indirect
 	golang.org/x/net v0.12.0 // indirect
 	golang.org/x/oauth2 v0.8.0 // indirect

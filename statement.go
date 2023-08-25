@@ -2,6 +2,7 @@ package embedded
 
 import (
 	"database/sql/driver"
+
 	"github.com/dolthub/vitess/go/sqltypes"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
@@ -64,7 +65,7 @@ func (stmt *doltStmt) execWithArgs(args []driver.Value) (gms.Schema, gms.RowIter
 		return nil, nil, err
 	}
 
-	sch, itr, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.gmsCtx, stmt.query, bindings)
+	sch, itr, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.gmsCtx, stmt.query, nil, bindings)
 	if err != nil {
 		return nil, nil, err
 	}
