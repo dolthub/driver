@@ -122,5 +122,5 @@ func LoadMultiEnvFromDir(
 		return nil, errhand.VerboseErrorFromError(err)
 	}
 	
-	return env.MultiEnvForDirectory(ctx, cfg, multiDbDirFs, version, true, nil)
+	return env.MultiEnvForDirectory(ctx, cfg, multiDbDirFs, version, nil)
 }
