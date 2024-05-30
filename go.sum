@@ -162,8 +162,8 @@ github.com/dolthub/maphash v0.0.0-20221220182448-74e1e1ea1577 h1:SegEguMxToBn045
 github.com/dolthub/maphash v0.0.0-20221220182448-74e1e1ea1577/go.mod h1:gkg4Ch4CdCDu5h6PMriVLawB7koZ+5ijb9puGMV50a4=
 github.com/dolthub/swiss v0.1.0 h1:EaGQct3AqeP/MjASHLiH6i4TAmgbG/c4rA6a1bzCOPc=
 github.com/dolthub/swiss v0.1.0/go.mod h1:BeucyB08Vb1G9tumVN3Vp/pyY4AMUnr9p7Rz7wJ7kAQ=
-github.com/dolthub/vitess v0.0.0-20240524204318-4c419c3de9c4 h1:nk+hnh7bpDs3vvOaaE+YtQPXnLenvEtd6Q8SptcbJRc=
-github.com/dolthub/vitess v0.0.0-20240524204318-4c419c3de9c4/go.mod h1:uBvlRluuL+SbEWTCZ68o0xvsdYZER3CEG/35INdzfJM=
+github.com/dolthub/vitess v0.0.0-20240529223909-05c840d2eab2 h1:u2muPElIE9VuAoU074qPIpvJaKqxSyUTcOgNfLatqec=
+github.com/dolthub/vitess v0.0.0-20240529223909-05c840d2eab2/go.mod h1:uBvlRluuL+SbEWTCZ68o0xvsdYZER3CEG/35INdzfJM=
 github.com/dustin/go-humanize v0.0.0-20171111073723-bb3d318650d4/go.mod h1:HtrtbFcZ19U5GC7JDqmcUSB87Iq5E25KnS6fMYU6eOk=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=

@@ -16,17 +16,33 @@ package embedded
 
 import (
 	"fmt"
+	"os"
 	"testing"
-
-	"github.com/stretchr/testify/require"
-	"gorm.io/driver/mysql"
-	"gorm.io/gorm"
 
 	"database/sql"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/gorm"
+
 	_ "github.com/go-sql-driver/mysql"
 )
+
+var loadedLocalLocation *time.Location
+
+func LoadedLocalLocation() *time.Location {
+	var err error
+	loadedLocalLocation, err = time.LoadLocation(time.Local.String())
+	if err != nil {
+		panic(err)
+	}
+	if loadedLocalLocation == nil {
+		panic("nil LoadedLocalLocation " + time.Local.String())
+	}
+	return loadedLocalLocation
+}
 
 type Item struct {
 	ItemId            uint       `gorm:"primaryKey;autoIncrement" json:"itemId"`
@@ -74,7 +90,15 @@ type XDFirmware struct {
 }
 
 func TestGorm(t *testing.T) {
-	dir := t.TempDir()
+	// Dolt and MySQL truncate to microseconds
+	createTime1 := time.Now().UTC().Truncate(time.Microsecond)
+	updateTime1 := createTime1.Add(time.Hour)
+
+	dir, err := os.MkdirTemp("", "dolthub-driver-tests-db*")
+	require.NoError(t, err)
+	defer func() {
+		os.RemoveAll(dir)
+	}()
 
 	var AllModels = []any{&User{}, &XDFirmware{}, &Item{}}
 
@@ -90,14 +114,14 @@ func TestGorm(t *testing.T) {
 	defer sqlDB.Close()
 
 	// Connect Dolt database to GORM
-	sDB, err := gorm.Open(mysql.New(mysql.Config{Conn: sqlDB}), &gorm.Config{SkipDefaultTransaction: true, PrepareStmt: true})
+	db, err := gorm.Open(mysql.New(mysql.Config{Conn: sqlDB}), &gorm.Config{SkipDefaultTransaction: true, PrepareStmt: true})
 	defer sqlDB.Close()
 	require.NoError(t, err)
 
 	// Now run migrations
-	err = sDB.AutoMigrate(AllModels...)
+	err = db.AutoMigrate(AllModels...)
 	require.NoError(t, err)
-	
+
 	// Insert some objects
 	bytes := []byte("user.jpg")
 	str := "a string"
@@ -110,10 +134,9 @@ func TestGorm(t *testing.T) {
 		UserAvatar:    &bytes,
 		AuthLevel:     2,
 	}
-	sDB.Save(&user)
+	tx := db.Save(&user)
+	require.NoError(t, tx.Error)
 
-	createTime1 := time.Now()
-	updateTime1 := createTime1.Add(time.Hour)
 	firmware1 := XDFirmware{
 		FWId:        "fw1",
 		Version:     "1.0.0",
@@ -123,7 +146,7 @@ func TestGorm(t *testing.T) {
 		Checksum:    "1234567890",
 		Path:        nil,
 		File: struct {
-			FileContent *[]byte `gorm:"check:COALESCE(path, file_content) IS NOT NULL" json:"fileContent"`                                  
+			FileContent *[]byte `gorm:"check:COALESCE(path, file_content) IS NOT NULL" json:"fileContent"`
 			FileName    *string `gorm:"check:file_content IS NULL OR (file_content IS NOT NULL AND file_name IS NOT NULL)" json:"fileName"`
 			MimeType    *string `gorm:"check:file_content IS NULL OR (file_content IS NOT NULL AND mime_type IS NOT NULL)" json:"mimeType"`
 		}{
@@ -138,8 +161,55 @@ func TestGorm(t *testing.T) {
 		PathFileChecksum: "",
 		UpFileChecksum:   "",
 	}
-	
-	sDB.Save(&firmware1)
-	
-	require.True(t, false)
+
+	tx = db.Save(&firmware1)
+	require.NoError(t, tx.Error)
+
+	item := Item{
+		ItemId:            1,
+		ItemNumber:        "item1",
+		XdotType:          "XDOT",
+		CreateAt:          createTime1,
+		UpdateAt:          updateTime1,
+		CreatedBy:         &user.UserId,
+		CreatedByInfo:     user,
+		TestFirmware:      &firmware1.FWId,
+		TestFirmwareInfo:  firmware1,
+		WriteFirmware:     &firmware1.FWId,
+		WriteFirmwareInfo: firmware1,
+	}
+
+	tx = db.Save(&item)
+	require.NoError(t, tx.Error)
+
+	// Query the objects
+	var findItem Item
+	// TODO: filtering on created date as inserted doesn't work, not sure if it's because the database is inserting 
+	//  its own timestamp or some kind of timezone issue 
+	result := db.
+		Preload("CreatedByInfo").
+		Preload("TestFirmwareInfo").
+		Preload("TestFirmwareInfo.CreatedByInfo").
+		Preload("WriteFirmwareInfo").
+		Preload("WriteFirmwareInfo.CreatedByInfo").
+		First(&findItem)	
+	require.NoError(t, result.Error)
+	assert.Equal(t, scrubItems(item, createTime1, updateTime1), scrubItems(findItem, createTime1, updateTime1))
 }
+
+// scrubItems returns an item with the create and update times set to the given values for comparison purposes since 
+// the database connection returns time objects with different timezone information internals that can't be compared 
+// with testify
+func scrubItems(item Item, create time.Time, update time.Time) Item {
+	item.CreateAt	= create
+	item.UpdateAt = update
+	item.CreatedByInfo.AuthLevel = 0 // this field is also auto assigned by the DB
+	item.TestFirmwareInfo.CreateAt = create
+	item.TestFirmwareInfo.UpdateAt = update
+	item.TestFirmwareInfo.CreatedByInfo.AuthLevel = 0
+	item.WriteFirmwareInfo.CreateAt = create
+	item.WriteFirmwareInfo.UpdateAt = update
+	item.WriteFirmwareInfo.CreatedByInfo.AuthLevel = 0
+	return item
+}
+
