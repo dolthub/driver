@@ -1,15 +1,17 @@
 module github.com/dolthub/driver
 
-go 1.21
+go 1.22
 
-toolchain go1.21.2
+toolchain go1.22.1
 
 require (
 	github.com/dolthub/dolt/go v0.40.5-0.20231206174848-7c88abef6e9f
 	github.com/dolthub/go-mysql-server v0.17.1-0.20231206191836-7274cc9553f1
-	github.com/dolthub/vitess v0.0.0-20231202001124-09287d7cc674
+	github.com/dolthub/vitess v0.0.0-20240529223909-05c840d2eab2
 	github.com/go-sql-driver/mysql v1.7.2-0.20230713085235-0b18dac46f7f
 	github.com/stretchr/testify v1.8.4
+	gorm.io/driver/mysql v1.5.6
+	gorm.io/gorm v1.25.10
 )
 
 require (
@@ -46,13 +48,14 @@ require (
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
-	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/google/s2a-go v0.1.7 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.2 // indirect
 	github.com/googleapis/gax-go/v2 v2.12.0 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
+	github.com/jinzhu/inflection v1.0.0 // indirect
+	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/juju/gnuflag v1.0.0 // indirect
@@ -84,7 +87,6 @@ require (
 	go.opentelemetry.io/otel v1.23.1 // indirect
 	go.opentelemetry.io/otel/metric v1.23.1 // indirect
 	go.opentelemetry.io/otel/trace v1.23.1 // indirect
-	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/crypto v0.19.0 // indirect
