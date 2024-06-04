@@ -195,6 +195,21 @@ func TestGorm(t *testing.T) {
 		First(&findItem)	
 	require.NoError(t, result.Error)
 	assert.Equal(t, scrubItems(item, createTime1, updateTime1), scrubItems(findItem, createTime1, updateTime1))
+	
+	// Re-running migration should work fine
+	err = db.AutoMigrate(AllModels...)
+	require.NoError(t, err)
+
+	findItem = Item{}
+	result = db.
+		Preload("CreatedByInfo").
+		Preload("TestFirmwareInfo").
+		Preload("TestFirmwareInfo.CreatedByInfo").
+		Preload("WriteFirmwareInfo").
+		Preload("WriteFirmwareInfo.CreatedByInfo").
+		First(&findItem)
+	require.NoError(t, result.Error)
+	assert.Equal(t, scrubItems(item, createTime1, updateTime1), scrubItems(findItem, createTime1, updateTime1))
 }
 
 // scrubItems returns an item with the create and update times set to the given values for comparison purposes since 
