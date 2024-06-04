@@ -5,9 +5,9 @@ go 1.22.2
 toolchain go1.22.3
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20240530151756-0ca0493dcb6f
-	github.com/dolthub/go-mysql-server v0.18.2-0.20240529234304-47f89331b0ea
-	github.com/dolthub/vitess v0.0.0-20240529223909-05c840d2eab2
+	github.com/dolthub/dolt/go v0.40.5-0.20240604165632-02f450318cb3
+	github.com/dolthub/go-mysql-server v0.18.2-0.20240604161217-d1dca79a32b8
+	github.com/dolthub/vitess v0.0.0-20240603172811-467efd832e48
 	github.com/go-sql-driver/mysql v1.7.2-0.20231213112541-0004702b931d
 	github.com/stretchr/testify v1.8.4
 	gorm.io/driver/mysql v1.5.6
