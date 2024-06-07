@@ -1,7 +1,8 @@
 
 # Dolt Database Driver
 
-This package provides a driver to be used with the database/sql package for database access in Golang.
+This package provides a database/sql-compatible driver for [embedding dolt inside a Go application](https://www.dolthub.com/blog/2022-07-25-embedded/).
+It allows you to access local dolt databases via the file system, akin to SQLite.
 For details of the database/sql package see [this tutorial](https://go.dev/doc/tutorial/database-access).
 Below I will cover things that are specific to using dolt with this database driver.
 
