@@ -1,8 +1,9 @@
 package embedded
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseDataSource(t *testing.T) {
@@ -24,13 +25,14 @@ func TestParseDataSource(t *testing.T) {
 		},
 		{
 			name:              "unix dsn test",
-			dsn:               `file:///Users/brian/datasets/test?commitname=Billy%20Batson&commitemail=shazam@gmail.com&database=hostedapidb&multiStatements=true`,
+			dsn:               `file:///Users/brian/datasets/test?commitname=Billy%20Batson&commitemail=shazam@gmail.com&database=hostedapidb&multiStatements=true&clientFoundRows=true`,
 			expectedDirectory: `/Users/brian/datasets/test`,
 			expectedParams: map[string][]string{
 				CommitNameParam:      {"Billy Batson"},
 				CommitEmailParam:     {"shazam@gmail.com"},
 				DatabaseParam:        {"hostedapidb"},
 				MultiStatementsParam: {"true"},
+				ClientFoundRowsParam: {"true"},
 			},
 		},
 	}
