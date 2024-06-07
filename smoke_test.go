@@ -3,15 +3,17 @@ package embedded
 import (
 	"context"
 	"database/sql"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"net/url"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMultiStatements(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t)
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
 	defer cleanupFunc()
 
 	ctx := context.Background()
@@ -54,10 +56,58 @@ func TestMultiStatements(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
+// TestClientFoundRows asserts that the number of affected rows reported for a query
+// correctly reflects whether the CLIENT_FOUND_ROWS capability is set or not.
+func TestClientFoundRows(t *testing.T) {
+	queries := []string{
+		"insert into testtable values (1,'aaron'),(2,'brian'),(3,'tim')",
+		"insert into testtable values (4,'aaron2'),(2,'brian2'),(3,'tim') on duplicate key update name = VALUES(name)",
+		"update testtable set name = (case id when 1 then 'aaron' when 2 then 'tim2' when 4 then 'aaron2' end) where id in (1,3,4)",
+	}
+
+	tests := []struct {
+		name            string
+		clientFoundRows bool
+		expectedRows    []int64
+	}{
+		{
+			name:            "client_found_rows_disabled",
+			clientFoundRows: false,
+			expectedRows:    []int64{3, 3, 1},
+		},
+		{
+			name:            "client_found_rows_enabled",
+			clientFoundRows: true,
+			expectedRows:    []int64{3, 4, 3},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			conn, cleanupFunc := initializeTestDatabaseConnection(t, test.clientFoundRows)
+			defer cleanupFunc()
+			ctx := context.Background()
+
+			res, err := conn.ExecContext(ctx, "create table testtable (id int primary key, name varchar(256))")
+			require.NoError(t, err)
+			_, err = res.RowsAffected()
+			require.NoError(t, err)
+
+			for i, query := range queries {
+				res, err := conn.ExecContext(ctx, query)
+				require.NoError(t, err)
+				rowsAffected, err := res.RowsAffected()
+				require.NoError(t, err)
+				require.Equal(t, test.expectedRows[i], rowsAffected)
+			}
+		})
+	}
+}
+
 // TestQueryContextInitialization asserts that the context is correctly initialized for each query, including
 // setting the current time at query execution start.
 func TestQueryContextInitialization(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t)
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
 	defer cleanupFunc()
 
 	ctx := context.Background()
@@ -89,7 +139,7 @@ func TestQueryContextInitialization(t *testing.T) {
 // initializeTestDatabaseConnection create a test database called testdb and initialize a database/sql connection
 // using the Dolt driver. The connection, |conn|, is returned, and |cleanupFunc| is a function that the test function
 // should defer in order to properly dispose of test resources.
-func initializeTestDatabaseConnection(t *testing.T) (conn *sql.Conn, cleanUpFunc func()) {
+func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn *sql.Conn, cleanUpFunc func()) {
 	dir, err := os.MkdirTemp("", "dolthub-driver-tests-db*")
 	require.NoError(t, err)
 
@@ -99,7 +149,17 @@ func initializeTestDatabaseConnection(t *testing.T) (conn *sql.Conn, cleanUpFunc
 
 	ctx := context.Background()
 
-	db, err := sql.Open(DoltDriverName, "file://"+dir+"?commitname=Billy%20Batson&commitemail=shazam@gmail.com&database=testdb&multistatements=true")
+	query := url.Values{
+		"commitname":      []string{"Billy Batson"},
+		"commitemail":     []string{"shazam@gmail.com"},
+		"database":        []string{"testdb"},
+		"multistatements": []string{"true"},
+	}
+	if clientFoundRows {
+		query["clientfoundrows"] = []string{"true"}
+	}
+	dsn := url.URL{Scheme: "file", Path: dir, RawQuery: query.Encode()}
+	db, err := sql.Open(DoltDriverName, dsn.String())
 	require.NoError(t, err)
 	require.NoError(t, db.PingContext(ctx))
 
