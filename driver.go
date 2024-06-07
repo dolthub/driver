@@ -11,6 +11,8 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
+	gmssql "github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/vitess/go/mysql"
 )
 
 const (
@@ -20,6 +22,7 @@ const (
 	CommitEmailParam     = "commitemail"
 	DatabaseParam        = "database"
 	MultiStatementsParam = "multistatements"
+	ClientFoundRowsParam = "clientfoundrows"
 )
 
 var _ driver.Driver = (*doltDriver)(nil)
@@ -98,6 +101,14 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 	}
 	if database, ok := ds.Params[DatabaseParam]; ok && len(database) == 1 {
 		gmsCtx.SetCurrentDatabase(database[0])
+	}
+	if ds.ParamIsTrue(ClientFoundRowsParam) {
+		client := gmsCtx.Client()
+		gmsCtx.SetClient(gmssql.Client{
+			User:         client.User,
+			Address:      client.Address,
+			Capabilities: client.Capabilities | mysql.CapabilityClientFoundRows,
+		})
 	}
 
 	return &DoltConn{
