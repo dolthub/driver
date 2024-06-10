@@ -136,6 +136,43 @@ func TestQueryContextInitialization(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
+// TestTypes asserts that various MySQL types are returned as the expected Go type by the driver.
+func TestTypes(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+	_, err := conn.ExecContext(ctx, `
+create table testtable (
+	enum_col ENUM('a', 'b', 'c'),
+	set_col SET('a', 'b', 'c'),
+	json_col JSON,
+	blob_col BLOB,
+	text_col TEXT,
+	geom_col POINT,
+	date_col DATETIME
+);
+
+insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5, -5), NOW());
+`)
+	require.NoError(t, err)
+
+	row := conn.QueryRowContext(ctx, "select * from testtable")
+	vals := make([]any, 7)
+	ptrs := make([]any, 7)
+	for i := range vals {
+		ptrs[i] = &vals[i]
+	}
+	require.NoError(t, row.Scan(ptrs...))
+	require.Equal(t, "b", vals[0])
+	require.Equal(t, "a,c", vals[1])
+	require.Equal(t, `{"key": 42}`, vals[2])
+	require.Equal(t, []byte(`data`), vals[3])
+	require.Equal(t, "text", vals[4])
+	require.IsType(t, []byte(nil), vals[5])
+	require.IsType(t, time.Time{}, vals[6])
+}
+
 // initializeTestDatabaseConnection create a test database called testdb and initialize a database/sql connection
 // using the Dolt driver. The connection, |conn|, is returned, and |cleanupFunc| is a function that the test function
 // should defer in order to properly dispose of test resources.
