@@ -1,9 +1,8 @@
 package embedded
 
 import (
-	"io"
-
 	"database/sql/driver"
+	"io"
 
 	gms "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/go-mysql-server/sql/types"
@@ -37,6 +36,10 @@ func newResult(gmsCtx *gms.Context, sch gms.Schema, rowItr gms.RowIter) *doltRes
 				last = int64(res.InsertID)
 			}
 		}
+	}
+
+	if err := rowItr.Close(gmsCtx); err != nil {
+		return &doltResult{err: err}
 	}
 
 	return &doltResult{
