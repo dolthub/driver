@@ -4,8 +4,10 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
-	gms "github.com/dolthub/go-mysql-server/sql"
 	"io"
+
+	gms "github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/go-mysql-server/sql/types"
 )
 
 var _ driver.Rows = (*doltRows)(nil)
@@ -57,6 +59,24 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 
 			if err != nil {
 				return fmt.Errorf("error processing column %d: %w", i, err)
+			}
+		} else if geomValue, ok := nextRow[i].(types.GeometryValue); ok {
+			dest[i] = geomValue.Serialize()
+		} else if enumType, ok := rows.sch[i].Type.(gms.EnumType); ok {
+			if v, _, err := enumType.Convert(nextRow[i]); err != nil {
+				return fmt.Errorf("could not convert to expected enum type for column %d: %w", i, err)
+			} else if enumStr, ok := enumType.At(int(v.(uint16))); !ok {
+				return fmt.Errorf("not a valid enum index for column %d: %v", i, v)
+			} else {
+				dest[i] = enumStr
+			}
+		} else if setType, ok := rows.sch[i].Type.(gms.SetType); ok {
+			if v, _, err := setType.Convert(nextRow[i]); err != nil {
+				return fmt.Errorf("could not convert to expected set type for column %d: %w", i, err)
+			} else if setStr, err := setType.BitsToString(v.(uint64)); err != nil {
+				return fmt.Errorf("could not convert value to set string for column %d: %w", i, err)
+			} else {
+				dest[i] = setStr
 			}
 		} else {
 			dest[i] = nextRow[i]
