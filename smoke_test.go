@@ -171,8 +171,5 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 	_, err = res.RowsAffected()
 	require.NoError(t, err)
 
-	_, err = conn.ExecContext(ctx, "commit;")
-	require.NoError(t, err)
-
 	return conn, cleanUpFunc
 }
