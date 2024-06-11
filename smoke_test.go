@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -195,7 +196,7 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 	if clientFoundRows {
 		query["clientfoundrows"] = []string{"true"}
 	}
-	dsn := url.URL{Scheme: "file", Path: dir, RawQuery: query.Encode()}
+	dsn := url.URL{Scheme: "file", Path: encodeDir(dir), RawQuery: query.Encode()}
 	db, err := sql.Open(DoltDriverName, dsn.String())
 	require.NoError(t, err)
 	require.NoError(t, db.PingContext(ctx))
@@ -209,4 +210,12 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 	require.NoError(t, err)
 
 	return conn, cleanUpFunc
+}
+
+func encodeDir(dir string) string {
+	// encodeDir translate a given path to a URL compatible path, mostly for windows compatibility
+	if os.PathSeparator == '\\' {
+		dir = strings.ReplaceAll(dir, `\`, `/`)
+	}
+	return dir
 }
