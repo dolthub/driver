@@ -216,8 +216,6 @@ func encodeDir(dir string) string {
 	// encodeDir translate a given path to a URL compatible path, mostly for windows compatibility
 	if os.PathSeparator == '\\' {
 		dir = strings.ReplaceAll(dir, `\`, `/`)
-		// strip off drive letter
-		dir = dir[2:]
 	}
 	return dir
 }
