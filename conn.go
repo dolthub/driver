@@ -6,9 +6,9 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"io"
-		"time"
+	"time"
 
-		"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
+	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 
 	gms "github.com/dolthub/go-mysql-server/sql"
 )

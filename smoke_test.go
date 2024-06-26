@@ -3,8 +3,7 @@ package embedded
 import (
 	"context"
 	"database/sql"
-	"fmt"
-"net/url"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -58,7 +57,7 @@ func TestMultiStatements(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
-func TestMultiStatementsBlocks(t *testing.T) {
+func TestMultiStatementsStoredProc(t *testing.T) {
 	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
 	defer cleanupFunc()
 
@@ -68,10 +67,31 @@ func TestMultiStatementsBlocks(t *testing.T) {
 	for rows.Next() {
 		var i int
 		err = rows.Scan(&i)
-		if err != nil {
-			panic(err)
-		}
-		fmt.Println(i)
+		require.NoError(t, err)
+		require.Equal(t, 1, i)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+}
+
+func TestMultiStatementsTrigger(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+	res, err := conn.ExecContext(ctx, "create table t (i int primary key, j int);")
+	require.NoError(t, err)
+	_, err = res.RowsAffected()
+	require.NoError(t, err)
+
+	rows, err := conn.QueryContext(ctx, "create trigger trig before insert on t for each row begin set new.j = new.j * 100; end; insert into t values (1, 2); select * from t;")
+	require.NoError(t, err)
+	for rows.Next() {
+		var i, j int
+		err = rows.Scan(&i, &j)
+		require.NoError(t, err)
+		require.Equal(t, 1, i)
+		require.Equal(t, 200, j)
 	}
 	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
