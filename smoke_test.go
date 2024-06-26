@@ -3,7 +3,8 @@ package embedded
 import (
 	"context"
 	"database/sql"
-	"net/url"
+	"fmt"
+"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -55,6 +56,25 @@ func TestMultiStatements(t *testing.T) {
 	require.Error(t, err)
 
 	require.NoError(t, conn.Close())
+}
+
+func TestMultiStatementsBlocks(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+	rows, err := conn.QueryContext(ctx, "create procedure p() begin select 1; end; call p(); call p(); call p();")
+	require.NoError(t, err)
+	for rows.Next() {
+		var i int
+		err = rows.Scan(&i)
+		if err != nil {
+			panic(err)
+		}
+		fmt.Println(i)
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
 }
 
 // TestClientFoundRows asserts that the number of affected rows reported for a query

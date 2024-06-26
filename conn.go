@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
-	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
-	gms "github.com/dolthub/go-mysql-server/sql"
 	"io"
-	"time"
+		"time"
+
+		"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
+
+	gms "github.com/dolthub/go-mysql-server/sql"
 )
 
 var _ driver.Conn = (*DoltConn)(nil)
@@ -25,20 +27,21 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 	multiStatements := d.DataSource.ParamIsTrue(MultiStatementsParam)
 
 	if multiStatements {
-		qs := NewQuerySplitter(query)
-		current, err := qs.Next()
-		if err != io.EOF && err != nil {
+		scanner := gms.NewMysqlParser()
+		parsed, prequery, remainder, err := scanner.Parse(d.gmsCtx, query, true)
+		if err != nil {
 			return nil, translateError(err)
 		}
 
-		for len(current) > 0 {
-			if !qs.HasMore() {
+		for {
+			if len(remainder) == 0 {
+				query = prequery
 				break
 			}
-			d.se.GetUnderlyingEngine()
 
 			err = func() error {
-				_, rowIter, err := d.se.Query(d.gmsCtx, current)
+				var rowIter gms.RowIter
+				_, rowIter, err = d.se.GetUnderlyingEngine().QueryWithBindings(d.gmsCtx, prequery, parsed, nil)
 				if err != nil {
 					return translateError(err)
 				}
@@ -59,13 +62,14 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 				return nil, err
 			}
 
-			current, err = qs.Next()
+			parsed, prequery, remainder, err = scanner.Parse(d.gmsCtx, remainder, true)
 			if err != nil {
-				return nil, err
+				return nil, translateError(err)
 			}
 		}
-
-		query = current
+		if prequery != "" {
+			query = prequery
+		}
 	}
 
 	if len(query) > 0 {
