@@ -8,13 +8,40 @@ import (
 	"github.com/dolthub/go-mysql-server/sql/types"
 )
 
-var _ driver.Result = (*doltResult)(nil)
+//var _ driver.Result = (*doltResult)(nil)
+var _ driver.RowsNextResultSet = (*doltResult)(nil)
 
 type doltResult struct {
 	affected int64
 	last     int64
 	err      error
 }
+
+func (result *doltResult) Columns() []string {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (result *doltResult) Close() error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (result *doltResult) Next(dest []driver.Value) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (result *doltResult) HasNextResultSet() bool {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (result *doltResult) NextResultSet() error {
+	//TODO implement me
+	panic("implement me")
+}
+
 
 func newResult(gmsCtx *gms.Context, sch gms.Schema, rowItr gms.RowIter) *doltResult {
 	var resultErr error

@@ -35,7 +35,6 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 
 		for {
 			if len(remainder) == 0 {
-				query = prequery
 				break
 			}
 
