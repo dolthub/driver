@@ -12,13 +12,65 @@ import (
 	"strconv"
 )
 
-var _ driver.Stmt = (*doltStmt)(nil)
+// doltMultiStmt represents a collection of statements to be executed against a
+// Dolt database.
+type doltMultiStmt struct {
+	stmts []*doltStmt
+}
 
+var _ driver.Stmt = (*doltMultiStmt)(nil)
+
+func (d doltMultiStmt) Close() error {
+	var retErr error
+	for _, stmt := range d.stmts {
+		if err := stmt.Close(); err != nil {
+			retErr = err
+		}
+	}
+
+	return retErr
+}
+
+func (d doltMultiStmt) NumInput() int {
+	return -1
+}
+
+func (d doltMultiStmt) Exec(args []driver.Value) (result driver.Result, err error) {
+	// TODO: Do we need a doltMultiResult? Doesn't seem like the driver package
+	//       supports multiple results from an exec statement.
+	for _, stmt := range d.stmts {
+		result, err = stmt.Exec(args)
+		if err != nil {
+			// If any error occurs, return the error and stop executing statements
+			return nil, err
+		}
+	}
+
+	// return the last result
+	return result, nil
+}
+
+func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
+	var multiResultSet doltMultiRows
+	for _, stmt := range d.stmts {
+		rows, err := stmt.Query(args)
+		if err != nil {
+			// If any error occurs, return the error and stop executing statements
+			return nil, err
+		}
+		multiResultSet.rowSets = append(multiResultSet.rowSets, rows.(*doltRows))
+	}
+	return &multiResultSet, nil
+}
+
+// doltStmt represents a single statement to be executed against a Dolt database.
 type doltStmt struct {
 	se     *engine.SqlEngine
 	gmsCtx *gms.Context
 	query  string
 }
+
+var _ driver.Stmt = (*doltStmt)(nil)
 
 // Close closes the statement.
 func (stmt *doltStmt) Close() error {

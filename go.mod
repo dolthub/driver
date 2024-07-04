@@ -5,8 +5,8 @@ go 1.22.2
 toolchain go1.22.3
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20240604165632-02f450318cb3
-	github.com/dolthub/go-mysql-server v0.18.2-0.20240701183357-77fa27941c98
+	github.com/dolthub/dolt/go v0.40.5-0.20240702155756-bcf4dd5f5cc1
+	github.com/dolthub/go-mysql-server v0.18.2-0.20240702022058-d7eb602c04ee
 	github.com/dolthub/vitess v0.0.0-20240626174323-4083c07f5e9c
 	github.com/go-sql-driver/mysql v1.7.2-0.20231213112541-0004702b931d
 	github.com/stretchr/testify v1.8.4
@@ -120,11 +120,5 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/dolthub/dolt/go => ../dolt/go
-
-replace github.com/dolthub/go-mysql-server => ../go-mysql-server
-
-replace github.com/dolthub/vitess => ../vitess
 
 replace github.com/google/flatbuffers => github.com/dolthub/flatbuffers v1.13.0-dh.1

@@ -42,7 +42,6 @@ type doltDriver struct {
 //
 // The path needs to point to a directory whose subdirectories are dolt databases.  If a "Create Database" command is
 // run a new subdirectory will be created in this path.
-// The supported parameters are
 func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 	ctx := context.Background()
 	var fs filesys.Filesys = filesys.LocalFS
@@ -89,7 +88,7 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		ServerUser: "root",
 		Autocommit: true,
 	}
-	
+
 	se, err := engine.NewSqlEngine(ctx, mrEnv, seCfg)
 	if err != nil {
 		return nil, err
@@ -122,16 +121,16 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 // with initialized environments for each of those subfolder data repositories. subfolders whose name starts with '.' are
 // skipped.
 func LoadMultiEnvFromDir(
-		ctx context.Context,
-		cfg config.ReadWriteConfig,
-		fs filesys.Filesys,
-		path, version string,
+	ctx context.Context,
+	cfg config.ReadWriteConfig,
+	fs filesys.Filesys,
+	path, version string,
 ) (*env.MultiRepoEnv, error) {
 
 	multiDbDirFs, err := fs.WithWorkingDir(path)
 	if err != nil {
 		return nil, errhand.VerboseErrorFromError(err)
 	}
-	
+
 	return env.MultiEnvForDirectory(ctx, cfg, multiDbDirFs, version, nil)
 }

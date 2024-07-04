@@ -10,7 +10,38 @@ import (
 	"github.com/dolthub/go-mysql-server/sql/types"
 )
 
-var _ driver.Rows = (*doltRows)(nil)
+// doltMultiRows implements driver.RowsNextResultSet by aggregating a set of individual
+// doltRows instances.
+type doltMultiRows struct {
+	rowSets       []*doltRows
+	currentRowSet int
+}
+
+var _ driver.RowsNextResultSet = (*doltMultiRows)(nil)
+
+func (d *doltMultiRows) Columns() []string {
+	return d.rowSets[d.currentRowSet].Columns()
+}
+
+func (d *doltMultiRows) Close() error {
+	return d.rowSets[d.currentRowSet].Close()
+}
+
+func (d *doltMultiRows) Next(dest []driver.Value) error {
+	return d.rowSets[d.currentRowSet].Next(dest)
+}
+
+func (d *doltMultiRows) HasNextResultSet() bool {
+	return d.currentRowSet < len(d.rowSets)-1
+}
+
+func (d *doltMultiRows) NextResultSet() error {
+	if d.currentRowSet+1 >= len(d.rowSets) {
+		return io.EOF
+	}
+	d.currentRowSet += 1
+	return nil
+}
 
 type doltRows struct {
 	sch     gms.Schema
@@ -19,6 +50,8 @@ type doltRows struct {
 
 	columns []string
 }
+
+var _ driver.Rows = (*doltRows)(nil)
 
 // Columns returns the names of the columns. The number of columns of the result is inferred from the length of the
 // slice. If a particular column name isn't known, an empty string should be returned for that entry.
