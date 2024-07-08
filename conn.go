@@ -44,11 +44,6 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 // prepareSingleStatement creates a prepared statement from |query|, returning any analysis errors,
 // and if successful returns a doltStmt containing the query.
 func (d *DoltConn) prepareSingleStatement(query string) (*doltStmt, error) {
-	_, err := d.se.GetUnderlyingEngine().PrepareQuery(d.gmsCtx, query)
-	if err != nil {
-		return nil, translateError(err)
-	}
-
 	return &doltStmt{
 		query:  query,
 		se:     d.se,

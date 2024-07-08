@@ -2,14 +2,12 @@ package embedded
 
 import (
 	"database/sql/driver"
-
-	"github.com/dolthub/vitess/go/sqltypes"
+	"strconv"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/vitess/go/sqltypes"
 	querypb "github.com/dolthub/vitess/go/vt/proto/query"
-
-	"strconv"
 )
 
 // doltMultiStmt represents a collection of statements to be executed against a
@@ -35,18 +33,22 @@ func (d doltMultiStmt) NumInput() int {
 	return -1
 }
 
-func (d doltMultiStmt) Exec(args []driver.Value) (result driver.Result, err error) {
-	// TODO: Do we need a doltMultiResult? Doesn't seem like the driver package
-	//       supports multiple results from an exec statement.
+func (d doltMultiStmt) Exec(args []driver.Value) (result driver.Result, retErr error) {
 	for _, stmt := range d.stmts {
+		var err error
 		result, err = stmt.Exec(args)
-		if err != nil {
-			// If any error occurs, return the error and stop executing statements
-			return nil, err
+		if err != nil && retErr == nil {
+			// If any error occurs, record the first error, but continue executing all statements
+			retErr = err
 		}
 	}
 
-	// return the last result
+	// Return the first error encountered, if there was one
+	if retErr != nil {
+		return nil, retErr
+	}
+
+	// Otherwise, return the last result, to match the MySQL driver's behavior
 	return result, nil
 }
 
@@ -55,12 +57,20 @@ func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 	for _, stmt := range d.stmts {
 		rows, err := stmt.Query(args)
 		if err != nil {
-			// If any error occurs, return the error and stop executing statements
-			return nil, err
+			// To match the MySQL driver's behavior, we attempt to execute all statements in a multi-statement
+			// query, even if some statements fail. If the first statement errors out, then we return that error,
+			// otherwise we save the error from any statements, so that they can be returned from NextResultSet()
+			// with the caller requests that result set.
+			rows = &doltRows{err: err}
 		}
 		multiResultSet.rowSets = append(multiResultSet.rowSets, rows.(*doltRows))
 	}
-	return &multiResultSet, nil
+
+	if multiResultSet.rowSets[0].err != nil {
+		return nil, multiResultSet.rowSets[0].err
+	} else {
+		return &multiResultSet, nil
+	}
 }
 
 // doltStmt represents a single statement to be executed against a Dolt database.
@@ -135,14 +145,23 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 	} else {
 		sch, rowIter, err = stmt.se.Query(stmt.gmsCtx, stmt.query)
 	}
-
 	if err != nil {
 		return nil, translateError(err)
 	}
 
+	// Wrap the result iterator in a peekableRowIter and call Peek() to read the first row from the result iterator.
+	// This is necessary for insert operations, since the insert happens inside the result iterator logic. Without
+	// calling this now, insert statements and some DML statements (e.g. CREATE PROCEDURE) would not be executed yet,
+	// and future statements in a multi-statement query that depend on those results would fail.
+	// Note that we don't worry about the result or the error here – we just want to exercise the iterator code to
+	// ensure the statement is executed. If an error does occur, we want that error to be returned in the Next()
+	// codepath, not here.
+	peekIter := peekableRowIter{iter: rowIter}
+	_, _ = peekIter.Peek(stmt.gmsCtx)
+
 	return &doltRows{
 		sch:     sch,
-		rowIter: rowIter,
+		rowIter: &peekIter,
 		gmsCtx:  stmt.gmsCtx,
 	}, nil
 }

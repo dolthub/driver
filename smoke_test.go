@@ -35,6 +35,12 @@ func TestMultiStatements(t *testing.T) {
 	var id int
 	var name string
 
+	// Move to the third result set; don't bother checking the results from the two insert statements.
+	// TODO: The MySQL driver does not require calling NextResultSet to move past insert statements – it detects that the
+	//       result sets are empty, and skips any empty result sets when working with multi-statements.
+	require.True(t, rows.NextResultSet())
+	require.True(t, rows.NextResultSet())
+
 	require.True(t, rows.Next())
 	require.NoError(t, rows.Scan(&id, &name))
 	require.Equal(t, 1, id)
@@ -51,8 +57,34 @@ func TestMultiStatements(t *testing.T) {
 	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
 
-	_, err = conn.QueryContext(ctx, "select * from testtable; select * from doesnotexist; select * from testtable")
-	require.Error(t, err)
+	rows, err = conn.QueryContext(ctx, "select * from testtable; select * from doesnotexist; select * from testtable")
+	require.NoError(t, err)
+
+	// The first result set contains all the rows from testtable
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&id, &name))
+	require.Equal(t, 1, id)
+	require.Equal(t, "aaron", name)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&id, &name))
+	require.Equal(t, 2, id)
+	require.Equal(t, "brian", name)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&id, &name))
+	require.Equal(t, 3, id)
+	require.Equal(t, "tim", name)
+	require.False(t, rows.Next())
+	require.NoError(t, rows.Err())
+
+	// The second result set has an error
+	require.False(t, rows.NextResultSet())
+	require.NotNil(t, rows.Err())
+	require.Equal(t, "Error 1146: table not found: doesnotexist", rows.Err().Error())
+
+	// The third result set should have more rows... but we can't access them after the
+	// error in the second result set. This is the same behavior as the MySQL driver
+	require.False(t, rows.NextResultSet())
+	require.NotNil(t, rows.Err())
 
 	require.NoError(t, conn.Close())
 }
@@ -64,6 +96,9 @@ func TestMultiStatementsStoredProc(t *testing.T) {
 	ctx := context.Background()
 	rows, err := conn.QueryContext(ctx, "create procedure p() begin select 1; end; call p(); call p(); call p();")
 	require.NoError(t, err)
+
+	// Advance to the second result set and check its rows
+	require.True(t, rows.NextResultSet())
 	for rows.Next() {
 		var i int
 		err = rows.Scan(&i)
@@ -71,6 +106,27 @@ func TestMultiStatementsStoredProc(t *testing.T) {
 		require.Equal(t, 1, i)
 	}
 	require.NoError(t, rows.Err())
+
+	// Advance to the third result set and check its rows
+	require.True(t, rows.NextResultSet())
+	for rows.Next() {
+		var i int
+		err = rows.Scan(&i)
+		require.NoError(t, err)
+		require.Equal(t, 1, i)
+	}
+	require.NoError(t, rows.Err())
+
+	// Advance to the fourth result set and check its rows
+	require.True(t, rows.NextResultSet())
+	for rows.Next() {
+		var i int
+		err = rows.Scan(&i)
+		require.NoError(t, err)
+		require.Equal(t, 1, i)
+	}
+	require.NoError(t, rows.Err())
+
 	require.NoError(t, rows.Close())
 }
 
@@ -86,6 +142,11 @@ func TestMultiStatementsTrigger(t *testing.T) {
 
 	rows, err := conn.QueryContext(ctx, "create trigger trig before insert on t for each row begin set new.j = new.j * 100; end; insert into t values (1, 2); select * from t;")
 	require.NoError(t, err)
+
+	// Advance to the third result set to test its results
+	require.True(t, rows.NextResultSet())
+	require.True(t, rows.NextResultSet())
+
 	for rows.Next() {
 		var i, j int
 		err = rows.Scan(&i, &j)
