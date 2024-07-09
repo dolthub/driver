@@ -33,19 +33,13 @@ func (d doltMultiStmt) NumInput() int {
 	return -1
 }
 
-func (d doltMultiStmt) Exec(args []driver.Value) (result driver.Result, retErr error) {
+func (d doltMultiStmt) Exec(args []driver.Value) (result driver.Result, err error) {
 	for _, stmt := range d.stmts {
-		var err error
 		result, err = stmt.Exec(args)
-		if err != nil && retErr == nil {
-			// If any error occurs, record the first error, but continue executing all statements
-			retErr = err
+		if err != nil {
+			// If any error occurs, return the error and don't execute any more statements
+			return nil, err
 		}
-	}
-
-	// Return the first error encountered, if there was one
-	if retErr != nil {
-		return nil, retErr
 	}
 
 	// Otherwise, return the last result, to match the MySQL driver's behavior
@@ -57,15 +51,17 @@ func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 	for _, stmt := range d.stmts {
 		rows, err := stmt.Query(args)
 		if err != nil {
-			// To match the MySQL driver's behavior, we attempt to execute all statements in a multi-statement
-			// query, even if some statements fail. If the first statement errors out, then we return that error,
-			// otherwise we save the error from any statements, so that they can be returned from NextResultSet()
-			// with the caller requests that result set.
-			rows = &doltRows{err: err}
+			// If an error occurs, we don't execute any more statements in the multistatement query. Instead, we
+			// capture the error in a doltRows instance, so that rows.NextResultSet() will return the error when
+			// the caller requests that result set. This is to match the MySQL driver's behavior.
+			multiResultSet.rowSets = append(multiResultSet.rowSets, &doltRows{err: err})
+			break
+		} else {
+			multiResultSet.rowSets = append(multiResultSet.rowSets, rows.(*doltRows))
 		}
-		multiResultSet.rowSets = append(multiResultSet.rowSets, rows.(*doltRows))
 	}
 
+	// If an error occurred on the first statement, go ahead and return the error, without any result set.
 	if multiResultSet.rowSets[0].err != nil {
 		return nil, multiResultSet.rowSets[0].err
 	} else {

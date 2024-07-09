@@ -125,6 +125,108 @@ func TestMultiStatements(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
+// TestMultiStatementsExecContext tests that using ExecContext to run a multi-statement query works as expected and
+// matches the behavior of the MySQL driver.
+func TestMultiStatementsExecContext(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+	_, err := conn.ExecContext(ctx, "CREATE TABLE example_table (id int, name varchar(256));")
+	require.NoError(t, err)
+
+	// ExecContext returns the results from the LAST statement executed. This differs from the behavior for QueryContext.
+	result, err := conn.ExecContext(ctx, "INSERT into example_table VALUES (999, 'boo'); "+
+		"INSERT into example_table VALUES (998, 'foo'); INSERT into example_table VALUES (997, 'goo'), (996, 'loo');")
+	require.NoError(t, err)
+	rowsAffected, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 2, rowsAffected)
+
+	// ExecContext returns an error if ANY of the statements can't be executed. This also differs from the behavior of QueryContext.
+	_, err = conn.ExecContext(ctx, "INSERT into example_table VALUES (100, 'woo'); "+
+		"INSERT into example_table VALUES (1, 2, 'too many'); SET @allStatementsExecuted=1;")
+	require.NotNil(t, err)
+	if !runTestsAgainstMySQL {
+		require.Equal(t, "Error 1105: number of values does not match number of columns provided", err.Error())
+	} else {
+		require.Equal(t, "Error 1136 (21S01): Column count doesn't match value count at row 1", err.Error())
+	}
+
+	// Once an error occurs, additional statements are NOT executed. This code tests that the last SET statement
+	// above was NOT executed.
+	rows, err := conn.QueryContext(ctx, "SELECT @allStatementsExecuted;")
+	var v any
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.Nil(t, v)
+	require.NoError(t, rows.Close())
+}
+
+// TestMultiStatementsQueryContext tests that using QueryContext to run a multi-statement query works as expected and
+// matches the behavior of the MySQL driver.
+func TestMultiStatementsQueryContext(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	// QueryContext returns the results from the FIRST statement executed. This differs from the behavior for ExecContext.
+	ctx := context.Background()
+	rows, err := conn.QueryContext(ctx, "SELECT 1 FROM dual; SELECT 2 FROM dual; ")
+	require.NoError(t, err)
+	require.NoError(t, rows.Err())
+
+	var v any
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.EqualValues(t, 1, v)
+	require.False(t, rows.Next())
+
+	require.True(t, rows.NextResultSet())
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.EqualValues(t, 2, v)
+	require.False(t, rows.Next())
+
+	require.False(t, rows.NextResultSet())
+	require.NoError(t, rows.Close())
+
+	// QueryContext returns an error only if the FIRST statement can't be executed.
+	rows, err = conn.QueryContext(ctx, "SELECT * FROM no_table; SELECT 42 FROM dual;")
+	require.Nil(t, rows)
+	require.NotNil(t, err)
+	if !runTestsAgainstMySQL {
+		require.Equal(t, "Error 1146: table not found: no_table", err.Error())
+	} else {
+		require.Equal(t, "Error 1146 (42S02): Table 'testdb.no_table' doesn't exist", err.Error())
+	}
+
+	// To access the error for statements after the first statement, you must use rows.Err()
+	rows, err = conn.QueryContext(ctx, "SELECT 42 FROM dual; SELECT * FROM no_table; SET @allStatementsExecuted=1;")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.EqualValues(t, 42, v)
+	require.False(t, rows.Next())
+	require.False(t, rows.NextResultSet())
+	require.NotNil(t, rows.Err())
+	if !runTestsAgainstMySQL {
+		require.Equal(t, "Error 1146: table not found: no_table", rows.Err().Error())
+	} else {
+		require.Equal(t, "Error 1146 (42S02): Table 'testdb.no_table' doesn't exist", rows.Err().Error())
+	}
+	require.NoError(t, rows.Close())
+
+	// Once an error occurs, additional statements are NOT executed. This code tests that the last SET statement
+	// above was NOT executed.
+	rows, err = conn.QueryContext(ctx, "SELECT @allStatementsExecuted;")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.Nil(t, v)
+	require.NoError(t, rows.Close())
+}
+
 // TestMultiStatementsWithNoSpaces tests that multistatements are parsed correctly, even when
 // there is no space between the statement delimiter and the next statement.
 func TestMultiStatementsWithNoSpaces(t *testing.T) {
