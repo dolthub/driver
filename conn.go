@@ -9,6 +9,7 @@ import (
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/vitess/go/vt/sqlparser"
 )
 
 var _ driver.Conn = (*DoltConn)(nil)
@@ -62,7 +63,10 @@ func (d *DoltConn) prepareMultiStatement(query string) (*doltMultiStmt, error) {
 	var err error
 	for remainder != "" {
 		_, query, remainder, err = scanner.Parse(d.gmsCtx, remainder, true)
-		if err != nil {
+		if err == sqlparser.ErrEmpty {
+			// Skip over any empty statements
+			continue
+		} else if err != nil {
 			return nil, translateError(err)
 		}
 

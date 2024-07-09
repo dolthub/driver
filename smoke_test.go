@@ -89,6 +89,44 @@ func TestMultiStatements(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
+// TestMultiStatementsWithEmptyStatements tests that any empty statements in a multistatement query are skipped over.
+// This includes statements that are entirely empty, as well as statements that contain only comments.
+func TestMultiStatementsWithEmptyStatements(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	var v int
+	ctx := context.Background()
+
+	// Test that empty statements don't return errors and don't return result sets
+	rows, err := conn.QueryContext(ctx, "select 42 from dual; # This is an empty statement")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.Equal(t, 42, v)
+	require.NoError(t, rows.Err())
+	require.False(t, rows.Next())
+	require.False(t, rows.NextResultSet())
+	require.NoError(t, rows.Close())
+
+	// Test another form of empty statement
+	rows, err = conn.QueryContext(ctx, "select 42 from dual; ; ; ; select 24 from dual; ;")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.Equal(t, 42, v)
+	require.NoError(t, rows.Err())
+	require.False(t, rows.Next())
+	require.True(t, rows.NextResultSet())
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.Equal(t, 24, v)
+	require.NoError(t, rows.Err())
+	require.False(t, rows.Next())
+	require.NoError(t, rows.Close())
+}
+
 func TestMultiStatementsStoredProc(t *testing.T) {
 	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
 	defer cleanupFunc()
