@@ -9,9 +9,38 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// runTestsAgainstMySQL can be set to true to run tests against a MySQL database using the MySQL driver.
+// This is useful to test behavior compatibility between the Dolt driver and the MySQL driver. When
+// turning this option on, you will need to modify code in the initializeTestDatabaseConnection function
+// and specify a valid DSN to an existing MySQL database.
+var runTestsAgainstMySQL = false
+
+// TestPreparedStatements tests that values can be plugged into "?" placeholders in queries.
+func TestPreparedStatements(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+	rows, err := conn.QueryContext(ctx, "create table prepTest (id int, name varchar(256));")
+	require.NoError(t, err)
+	for rows.Next() {
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+
+	rows, err = conn.QueryContext(ctx, "insert into prepTest VALUES (?, ?);", 10, "foo")
+	require.NoError(t, err)
+	for rows.Next() {
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+
+}
 
 func TestMultiStatements(t *testing.T) {
 	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
@@ -36,10 +65,12 @@ func TestMultiStatements(t *testing.T) {
 	var name string
 
 	// Move to the third result set; don't bother checking the results from the two insert statements.
-	// TODO: The MySQL driver does not require calling NextResultSet to move past insert statements – it detects that the
-	//       result sets are empty, and skips any empty result sets when working with multi-statements.
-	require.True(t, rows.NextResultSet())
-	require.True(t, rows.NextResultSet())
+	// NOTE: The MySQL driver does not require calling NextResultSet to move past insert statements – it detects that
+	//       the result sets are empty, and skips any empty result sets when working with multi-statements.
+	if !runTestsAgainstMySQL {
+		require.True(t, rows.NextResultSet())
+		require.True(t, rows.NextResultSet())
+	}
 
 	require.True(t, rows.Next())
 	require.NoError(t, rows.Scan(&id, &name))
@@ -79,7 +110,12 @@ func TestMultiStatements(t *testing.T) {
 	// The second result set has an error
 	require.False(t, rows.NextResultSet())
 	require.NotNil(t, rows.Err())
-	require.Equal(t, "Error 1146: table not found: doesnotexist", rows.Err().Error())
+	// MySQL returns a slightly different error message than Dolt
+	if !runTestsAgainstMySQL {
+		require.Equal(t, "Error 1146: table not found: doesnotexist", rows.Err().Error())
+	} else {
+		require.Equal(t, "Error 1146 (42S02): Table 'testdb.doesnotexist' doesn't exist", rows.Err().Error())
+	}
 
 	// The third result set should have more rows... but we can't access them after the
 	// error in the second result set. This is the same behavior as the MySQL driver
@@ -146,13 +182,19 @@ func TestMultiStatementsWithEmptyStatements(t *testing.T) {
 	require.Equal(t, 42, v)
 	require.NoError(t, rows.Err())
 	require.False(t, rows.Next())
-	require.True(t, rows.NextResultSet())
-	require.NoError(t, err)
-	require.True(t, rows.Next())
-	require.NoError(t, rows.Scan(&v))
-	require.Equal(t, 24, v)
-	require.NoError(t, rows.Err())
-	require.False(t, rows.Next())
+
+	// NOTE: The MySQL driver does not allow moving past empty statements to the next result set
+	if !runTestsAgainstMySQL {
+		require.True(t, rows.NextResultSet())
+		require.NoError(t, err)
+		require.True(t, rows.Next())
+		require.NoError(t, rows.Scan(&v))
+		require.Equal(t, 24, v)
+		require.NoError(t, rows.Err())
+		require.False(t, rows.Next())
+	}
+
+	require.False(t, rows.NextResultSet())
 	require.NoError(t, rows.Close())
 }
 
@@ -165,7 +207,11 @@ func TestMultiStatementsStoredProc(t *testing.T) {
 	require.NoError(t, err)
 
 	// Advance to the second result set and check its rows
-	require.True(t, rows.NextResultSet())
+	// NOTE: The MySQL driver automatically positions the first result set at the second statement,
+	//       since the first statement has an empty result set.
+	if !runTestsAgainstMySQL {
+		require.True(t, rows.NextResultSet())
+	}
 	for rows.Next() {
 		var i int
 		err = rows.Scan(&i)
@@ -211,8 +257,12 @@ func TestMultiStatementsTrigger(t *testing.T) {
 	require.NoError(t, err)
 
 	// Advance to the third result set to test its results
-	require.True(t, rows.NextResultSet())
-	require.True(t, rows.NextResultSet())
+	// NOTE: The MySQL driver automatically positions the first result set at the third statement, because
+	//       it skips empty result sets.
+	if !runTestsAgainstMySQL {
+		require.True(t, rows.NextResultSet())
+		require.True(t, rows.NextResultSet())
+	}
 
 	for rows.Next() {
 		var i, j int
@@ -333,11 +383,11 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 		ptrs[i] = &vals[i]
 	}
 	require.NoError(t, row.Scan(ptrs...))
-	require.Equal(t, "b", vals[0])
-	require.Equal(t, "a,c", vals[1])
-	require.Equal(t, `{"key": 42}`, vals[2])
-	require.Equal(t, []byte(`data`), vals[3])
-	require.Equal(t, "text", vals[4])
+	require.EqualValues(t, "b", vals[0])
+	require.EqualValues(t, "a,c", vals[1])
+	require.EqualValues(t, `{"key": 42}`, vals[2])
+	require.EqualValues(t, []byte(`data`), vals[3])
+	require.EqualValues(t, "text", vals[4])
 	require.IsType(t, []byte(nil), vals[5])
 	require.IsType(t, time.Time{}, vals[6])
 }
@@ -369,10 +419,36 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 	require.NoError(t, err)
 	require.NoError(t, db.PingContext(ctx))
 
+	// Setting runTestsAgainstMySQL to true allows you to point these tests at a MySQL database and use the
+	// MySQL driver. This is useful to compare the behavior of the Dolt driver to the MySQL driver. Ideally,
+	// we want the Dolt driver to have the same semantics/behavior as the MySQL driver, so that customers
+	// familiar with using the MySQL driver, or code already using the MySQL driver, can easily switch over
+	// to the Dolt driver.
+	// Note that you have to manually configure this and plug in a valid MySQL DSN to run the tests this way.
+	if runTestsAgainstMySQL {
+		dsn := "root@tcp(localhost:3306)/?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true"
+		if clientFoundRows {
+			dsn += "&clientFoundRows=true"
+		}
+		db, err = sql.Open("mysql", dsn)
+		require.NoError(t, err)
+		require.NoError(t, db.PingContext(ctx))
+	}
+
 	conn, err = db.Conn(ctx)
 	require.NoError(t, err)
 
-	res, err := conn.ExecContext(ctx, "create database testdb")
+	res, err := conn.ExecContext(ctx, "drop database if exists testdb")
+	require.NoError(t, err)
+	_, err = res.RowsAffected()
+	require.NoError(t, err)
+
+	res, err = conn.ExecContext(ctx, "create database testdb")
+	require.NoError(t, err)
+	_, err = res.RowsAffected()
+	require.NoError(t, err)
+
+	res, err = conn.ExecContext(ctx, "use testdb")
 	require.NoError(t, err)
 	_, err = res.RowsAffected()
 	require.NoError(t, err)
