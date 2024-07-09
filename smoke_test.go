@@ -89,6 +89,35 @@ func TestMultiStatements(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
+// TestMultiStatementsWithNoSpaces tests that multistatements are parsed correctly, even when
+// there is no space between the statement delimiter and the next statement.
+func TestMultiStatementsWithNoSpaces(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	var v int
+	ctx := context.Background()
+	rows, err := conn.QueryContext(ctx, "select 42 from dual;select 43 from dual;")
+
+	// Check the first result set
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.Equal(t, 42, v)
+	require.NoError(t, rows.Err())
+	require.False(t, rows.Next())
+
+	// Check the second result set
+	require.True(t, rows.NextResultSet())
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.Equal(t, 43, v)
+	require.NoError(t, rows.Err())
+	require.False(t, rows.Next())
+	require.NoError(t, rows.Close())
+}
+
 // TestMultiStatementsWithEmptyStatements tests that any empty statements in a multistatement query are skipped over.
 // This includes statements that are entirely empty, as well as statements that contain only comments.
 func TestMultiStatementsWithEmptyStatements(t *testing.T) {
