@@ -63,14 +63,8 @@ func TestMultiStatements(t *testing.T) {
 	var id int
 	var name string
 
-	// Move to the third result set; don't bother checking the results from the two insert statements.
-	// NOTE: The MySQL driver does not require calling NextResultSet to move past insert statements – it detects that
-	//       the result sets are empty, and skips any empty result sets when working with multi-statements.
-	if !runTestsAgainstMySQL {
-		require.True(t, rows.NextResultSet())
-		require.True(t, rows.NextResultSet())
-	}
-
+	// NOTE: Because the first two statements are not queries and don't have real result sets, the current result set
+	//       is automatically positioned at the third statement.
 	require.True(t, rows.Next())
 	require.NoError(t, rows.Scan(&id, &name))
 	require.Equal(t, 1, id)
@@ -224,6 +218,51 @@ func TestMultiStatementsQueryContext(t *testing.T) {
 	require.NoError(t, rows.Scan(&v))
 	require.Nil(t, v)
 	require.NoError(t, rows.Close())
+
+	// Non-query statements don't return a real result set, so they are skipped over automatically
+	rows, err = conn.QueryContext(ctx, "SET @notUsed=1; SELECT 42 FROM dual; ")
+	require.NoError(t, err)
+	require.NoError(t, rows.Err())
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.EqualValues(t, 42, v)
+	require.NoError(t, rows.Close())
+
+	// Queries that generate an empty result set are NOT skipped over automatically
+	rows, err = conn.QueryContext(ctx, "CREATE TABLE t (pk int primary key); SELECT * FROM t; SELECT 42 FROM dual;")
+	require.NoError(t, err)
+	require.NoError(t, rows.Err())
+	require.False(t, rows.Next())
+	require.True(t, rows.NextResultSet())
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.EqualValues(t, 42, v)
+	require.NoError(t, rows.Close())
+
+	// If an error occurs between two valid queries, NextResulSet() returns false and exposes the
+	// error from rows.Err().
+	rows, err = conn.QueryContext(ctx, "SELECT * FROM t; SELECT * from t2; SELECT 42 FROM dual;")
+	require.NoError(t, err)
+	require.NoError(t, rows.Err())
+	require.False(t, rows.Next())
+	require.False(t, rows.NextResultSet())
+	require.NotNil(t, rows.Err())
+	if !runTestsAgainstMySQL {
+		require.Equal(t, "Error 1146: table not found: t2", rows.Err().Error())
+	} else {
+		require.Equal(t, "Error 1146 (42S02): Table 'testdb.t2' doesn't exist", rows.Err().Error())
+	}
+	require.NoError(t, rows.Close())
+
+	// If an error occurs before the first real query results set, the error is returned, with no rows
+	rows, err = conn.QueryContext(ctx, "set @foo='bar'; SELECT * from t2; SELECT 42 FROM dual;")
+	require.NotNil(t, err)
+	require.Nil(t, rows)
+	if !runTestsAgainstMySQL {
+		require.Equal(t, "Error 1146: table not found: t2", err.Error())
+	} else {
+		require.Equal(t, "Error 1146 (42S02): Table 'testdb.t2' doesn't exist", err.Error())
+	}
 }
 
 // TestMultiStatementsWithNoSpaces tests that multistatements are parsed correctly, even when
@@ -307,12 +346,8 @@ func TestMultiStatementsStoredProc(t *testing.T) {
 	rows, err := conn.QueryContext(ctx, "create procedure p() begin select 1; end; call p(); call p(); call p();")
 	require.NoError(t, err)
 
-	// Advance to the second result set and check its rows
-	// NOTE: The MySQL driver automatically positions the first result set at the second statement,
-	//       since the first statement has an empty result set.
-	if !runTestsAgainstMySQL {
-		require.True(t, rows.NextResultSet())
-	}
+	// NOTE: Because the first statement is not a query and doesn't have a real result set, the current result set
+	//       is automatically positioned at the second statement.
 	for rows.Next() {
 		var i int
 		err = rows.Scan(&i)
@@ -357,14 +392,8 @@ func TestMultiStatementsTrigger(t *testing.T) {
 	rows, err := conn.QueryContext(ctx, "create trigger trig before insert on t for each row begin set new.j = new.j * 100; end; insert into t values (1, 2); select * from t;")
 	require.NoError(t, err)
 
-	// Advance to the third result set to test its results
-	// NOTE: The MySQL driver automatically positions the first result set at the third statement, because
-	//       it skips empty result sets.
-	if !runTestsAgainstMySQL {
-		require.True(t, rows.NextResultSet())
-		require.True(t, rows.NextResultSet())
-	}
-
+	// NOTE: Because the first statement is not a query and doesn't have a real result set, the current result set
+	//       is automatically positioned at the second statement.
 	for rows.Next() {
 		var i, j int
 		err = rows.Scan(&i, &j)

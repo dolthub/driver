@@ -6,6 +6,7 @@ import (
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
+	"github.com/dolthub/go-mysql-server/sql/types"
 	"github.com/dolthub/vitess/go/sqltypes"
 	querypb "github.com/dolthub/vitess/go/vt/proto/query"
 )
@@ -61,9 +62,19 @@ func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 		}
 	}
 
-	// If an error occurred on the first statement, go ahead and return the error, without any result set.
-	if multiResultSet.rowSets[0].err != nil {
-		return nil, multiResultSet.rowSets[0].err
+	// Position the current result set index at the first statement that is a query, with a real result set. In
+	// other words, skip over any statements that don't actually return results sets (e.g. INSERT or DDL statements).
+	for ; multiResultSet.currentRowSet < len(multiResultSet.rowSets); multiResultSet.currentRowSet++ {
+		if multiResultSet.rowSets[multiResultSet.currentRowSet].isQueryResultSet ||
+			multiResultSet.rowSets[multiResultSet.currentRowSet].err != nil {
+			break
+		}
+	}
+
+	// If an error occurred before any query result set, go ahead and return the error, without any result set.
+	if multiResultSet.currentRowSet < len(multiResultSet.rowSets) &&
+		multiResultSet.rowSets[multiResultSet.currentRowSet].err != nil {
+		return nil, multiResultSet.rowSets[multiResultSet.currentRowSet].err
 	} else {
 		return &multiResultSet, nil
 	}
@@ -149,15 +160,34 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 	// This is necessary for insert operations, since the insert happens inside the result iterator logic. Without
 	// calling this now, insert statements and some DML statements (e.g. CREATE PROCEDURE) would not be executed yet,
 	// and future statements in a multi-statement query that depend on those results would fail.
-	// Note that we don't worry about the result or the error here – we just want to exercise the iterator code to
-	// ensure the statement is executed. If an error does occur, we want that error to be returned in the Next()
-	// codepath, not here.
+	// If an error does occur, we want that error to be returned in the Next() codepath, not here.
 	peekIter := peekableRowIter{iter: rowIter}
-	_, _ = peekIter.Peek(stmt.gmsCtx)
+	row, _ := peekIter.Peek(stmt.gmsCtx)
 
 	return &doltRows{
-		sch:     sch,
-		rowIter: &peekIter,
-		gmsCtx:  stmt.gmsCtx,
+		sch:              sch,
+		rowIter:          &peekIter,
+		gmsCtx:           stmt.gmsCtx,
+		isQueryResultSet: isQueryResultSet(row),
 	}, nil
+}
+
+// isQueryResultSet returns true if the specified |row| is a valid result set for a query. If row only contains
+// one column and is an OkResult, or if row has zero columns, then the statement that generated this row was not
+// a query.
+func isQueryResultSet(row gms.Row) bool {
+	// If row is nil, return true since this could still be a valid, empty result set.
+	if row == nil {
+		return true
+	}
+
+	if len(row) == 1 {
+		if _, ok := row[0].(types.OkResult); ok {
+			return false
+		}
+	} else if len(row) == 0 {
+		return false
+	}
+
+	return true
 }
