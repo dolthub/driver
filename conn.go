@@ -21,14 +21,8 @@ type DoltConn struct {
 	DataSource *DoltDataSource
 }
 
-// Prepare calls the SQL engine to prepare |query| on this connection and returns a *doltStmt. If any
-// errors were encountered preparing |query|, the error is returned instead. If multistatement mode
+// Prepare packages up |query| as a *doltStmt so it can be executed. If multistatements mode
 // has been enabled, then a *doltMultiStmt will be returned, capable of executing multiple statements.
-//
-// Note that the prepared query created by this method is never actually executed – the query is later
-// executed as part of doltStmt, without using the prepared statement. The point of preparing it here is
-// to detect any analysis errors. This matches the behavior of the MySQL driver implementation, but it
-// may make sense to revisit this in the future.
 func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 	// Reuse the same ctx instance, but update the QueryTime to the current time.
 	// Statements are executed serially on a connection, so it's safe to reuse
@@ -42,8 +36,7 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 	}
 }
 
-// prepareSingleStatement creates a prepared statement from |query|, returning any analysis errors,
-// and if successful returns a doltStmt containing the query.
+// prepareSingleStatement creates a doltStmt from |query|.
 func (d *DoltConn) prepareSingleStatement(query string) (*doltStmt, error) {
 	return &doltStmt{
 		query:  query,
@@ -52,9 +45,7 @@ func (d *DoltConn) prepareSingleStatement(query string) (*doltStmt, error) {
 	}, nil
 }
 
-// prepareMultiStatement creates a prepared statement from each individual statement in |query|,
-// returning any analysis errors. Otherwise, if successful, returns a doltMultiStmt containing
-// a doltStmt for each individual statement in |query|.
+// prepareMultiStatement creates a doltStmt from each individual statement in |query|.
 func (d *DoltConn) prepareMultiStatement(query string) (*doltMultiStmt, error) {
 	var doltMultiStmt doltMultiStmt
 	scanner := gms.NewMysqlParser()

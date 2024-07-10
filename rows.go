@@ -64,7 +64,7 @@ type doltRows struct {
 
 	columns []string
 
-	// err holds the error encountered while trying to retrieve this result set
+	// err holds any error encountered while trying to retrieve this result set
 	err error
 }
 
@@ -163,8 +163,6 @@ func (p *peekableRowIter) Peek(ctx *gms.Context) (gms.Row, error) {
 
 // Next implements gms.RowIter
 func (p *peekableRowIter) Next(ctx *gms.Context) (gms.Row, error) {
-	// TODO: If peek returned an error, we need to return that error here
-	//       Although... calling Next() again *should* still return the error?
 	if len(p.peeks) > 0 {
 		peek := p.peeks[0]
 		p.peeks = p.peeks[1:]

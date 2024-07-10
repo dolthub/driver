@@ -39,7 +39,6 @@ func TestPreparedStatements(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
-
 }
 
 func TestMultiStatements(t *testing.T) {
