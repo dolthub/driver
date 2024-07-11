@@ -39,16 +39,16 @@ func main() {
 	db, err := sql.Open("dolt", dataSource)
 	errExit("failed to open database using the dolt driver: %w", err)
 
-	err = printQuery(ctx, db, "CREATE DATABASE IF NOT EXISTS testdb;USE testdb;")
+	err = printQuery(ctx, db, "CREATE DATABASE IF NOT EXISTS testdb; USE testdb;")
 	errExit("", err)
 
 	err = printQuery(ctx, db, "USE testdb;")
 	errExit("", err)
 
-	printQuery(ctx, db, `CREATE TABLE IF NOT EXISTS t2(
-    pk int primary key auto_increment,
-    c1 varchar(32)
-)`)
+	err = printQuery(ctx, db, `CREATE TABLE IF NOT EXISTS t2(
+		pk int primary key auto_increment,
+		c1 varchar(32)
+	)`)
 	errExit("", err)
 
 	printQuery(ctx, db, "SHOW TABLES;")
@@ -63,21 +63,22 @@ func main() {
 	fmt.Println(result.LastInsertId())
 
 	err = printQuery(ctx, db, `CREATE TABLE IF NOT EXISTS t1 (
-	pk int PRIMARY KEY,
-	c1 varchar(512),
-	c2 float,
-	c3 bool,
-	c4 datetime
-);`)
+		pk int PRIMARY KEY,
+		c1 varchar(512),
+		c2 float,
+		c3 bool,
+		c4 datetime
+	);`)
+	errExit("", err)
 
 	err = printQuery(ctx, db, "SELECT * FROM t1;")
 	errExit("", err)
 
 	err = printQuery(ctx, db, `REPLACE INTO t1 VALUES 
-(1, 'this is a test', 0, 0, '1998-01-23 12:45:56'),
-(2, 'it is only a test', 1.0, 1, '2010-12-31 01:15:00'),
-(3, NULL, 3.335, 0, NULL),
-(4, 'something something', 3.5, 1, '2015-04-03 14:00:45');`)
+		(1, 'this is a test', 0, 0, '1998-01-23 12:45:56'),
+		(2, 'it is only a test', 1.0, 1, '2010-12-31 01:15:00'),
+		(3, NULL, 3.335, 0, NULL),
+		(4, 'something something', 3.5, 1, '2015-04-03 14:00:45');`)
 	errExit("", err)
 
 	err = printQuery(ctx, db, "SELECT * FROM t1;")

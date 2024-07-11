@@ -5,9 +5,9 @@ go 1.22.2
 toolchain go1.22.3
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20240604165632-02f450318cb3
-	github.com/dolthub/go-mysql-server v0.18.2-0.20240604161217-d1dca79a32b8
-	github.com/dolthub/vitess v0.0.0-20240603172811-467efd832e48
+	github.com/dolthub/dolt/go v0.40.5-0.20240702155756-bcf4dd5f5cc1
+	github.com/dolthub/go-mysql-server v0.18.2-0.20240702022058-d7eb602c04ee
+	github.com/dolthub/vitess v0.0.0-20240709194214-7926ea9d425d
 	github.com/go-sql-driver/mysql v1.7.2-0.20231213112541-0004702b931d
 	github.com/stretchr/testify v1.8.4
 	gorm.io/driver/mysql v1.5.6
@@ -71,6 +71,7 @@ require (
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-runewidth v0.0.15 // indirect
+	github.com/mohae/uvarint v0.0.0-20160208145430-c3f9e62bf2b0 // indirect
 	github.com/oracle/oci-go-sdk/v65 v65.55.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
@@ -94,17 +95,17 @@ require (
 	go.opentelemetry.io/otel/trace v1.23.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
-	golang.org/x/crypto v0.21.0 // indirect
+	golang.org/x/crypto v0.23.0 // indirect
 	golang.org/x/exp v0.0.0-20240205201215-2c58cdc269a3 // indirect
-	golang.org/x/mod v0.15.0 // indirect
-	golang.org/x/net v0.23.0 // indirect
+	golang.org/x/mod v0.17.0 // indirect
+	golang.org/x/net v0.25.0 // indirect
 	golang.org/x/oauth2 v0.17.0 // indirect
-	golang.org/x/sync v0.6.0 // indirect
-	golang.org/x/sys v0.18.0 // indirect
-	golang.org/x/term v0.18.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/sync v0.7.0 // indirect
+	golang.org/x/sys v0.20.0 // indirect
+	golang.org/x/term v0.20.0 // indirect
+	golang.org/x/text v0.16.0 // indirect
 	golang.org/x/time v0.5.0 // indirect
-	golang.org/x/tools v0.18.0 // indirect
+	golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d // indirect
 	golang.org/x/xerrors v0.0.0-20231012003039-104605ab7028 // indirect
 	google.golang.org/api v0.164.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect

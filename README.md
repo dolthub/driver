@@ -27,7 +27,7 @@ cd dbs
 dolt clone <REMOTE URL>
 ```
 
-Finally you can create the dbs directory as shown above and then create the database in code using a SQL `CREATE TABLE` statement
+Finally, you can create the dbs directory as shown above and then create the database in code using a SQL `CREATE TABLE` statement
 
 ### Connecting to the Database
 
@@ -61,3 +61,31 @@ clientfoundrows - If set to true, returns the number of matching rows instead of
 #### Example DSN
 
 `file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename`
+
+### Multi-Statement Support
+
+If you pass the `multistatements=true` parameter in the DSN, you can execute multiple statements in one query. The returned 
+rows allow you to iterate over the returned result sets by using the `NextResultSet` method, just like you can with the
+MySQL driver. 
+
+```go
+rows, err := db.Query("SELECT * from someTable; SELECT * from anotherTable;")
+// If an error is returned, it means it came from the first statement
+if err != nil {
+	panic(err)
+}
+
+for rows.Next() {
+	// process the first result set
+}
+
+if rows.NextResultSet() {
+    for rows.Next() {
+        // process the second result set
+    }
+} else {
+	// If NextResultSet returns false when there were more statements, it means there was an error,
+	// which you can access through rows.Err()
+	panic(rows.Err())
+}
+```
