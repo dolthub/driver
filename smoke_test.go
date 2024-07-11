@@ -20,7 +20,7 @@ import (
 // familiar with using the MySQL driver, or code already using the MySQL driver, can easily switch
 // to the Dolt driver. When this option is enabled, the MySQL database connection can be configured
 // using mysqlDsn below.
-var runTestsAgainstMySQL = true
+var runTestsAgainstMySQL = false
 
 // mysqlDsn specifies the connection string for a MySQL database. Used only when the
 // runTestsAgainstMySQL variable above is enabled.
