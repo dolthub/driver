@@ -15,10 +15,16 @@ import (
 )
 
 // runTestsAgainstMySQL can be set to true to run tests against a MySQL database using the MySQL driver.
-// This is useful to test behavior compatibility between the Dolt driver and the MySQL driver. When
-// turning this option on, you will need to modify code in the initializeTestDatabaseConnection function
-// and specify a valid DSN to an existing MySQL database.
-var runTestsAgainstMySQL = false
+// This is useful to test behavior compatibility between the Dolt driver and the MySQL driver. We
+// want the Dolt driver to have the same semantics/behavior as the MySQL driver, so that customers
+// familiar with using the MySQL driver, or code already using the MySQL driver, can easily switch
+// to the Dolt driver. When this option is enabled, the MySQL database connection can be configured
+// using mysqlDsn below.
+var runTestsAgainstMySQL = true
+
+// mysqlDsn specifies the connection string for a MySQL database. Used only when the
+// runTestsAgainstMySQL variable above is enabled.
+var mysqlDsn = "root@tcp(localhost:3306)/?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true"
 
 // TestPreparedStatements tests that values can be plugged into "?" placeholders in queries.
 func TestPreparedStatements(t *testing.T) {
@@ -551,14 +557,8 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 	require.NoError(t, err)
 	require.NoError(t, db.PingContext(ctx))
 
-	// Setting runTestsAgainstMySQL to true allows you to point these tests at a MySQL database and use the
-	// MySQL driver. This is useful to compare the behavior of the Dolt driver to the MySQL driver. Ideally,
-	// we want the Dolt driver to have the same semantics/behavior as the MySQL driver, so that customers
-	// familiar with using the MySQL driver, or code already using the MySQL driver, can easily switch over
-	// to the Dolt driver.
-	// Note that you have to manually configure this and plug in a valid MySQL DSN to run the tests this way.
 	if runTestsAgainstMySQL {
-		dsn := "root@tcp(localhost:3306)/?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true"
+		dsn := mysqlDsn
 		if clientFoundRows {
 			dsn += "&clientFoundRows=true"
 		}
