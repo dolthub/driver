@@ -136,6 +136,10 @@ func TestMultiStatementsExecContext(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 2, rowsAffected)
 
+	// Assert that all statements were correctly executed
+	requireResults(t, conn, "SELECT * FROM example_table ORDER BY id;",
+		[][]any{{996, "loo"}, {997, "goo"}, {998, "foo"}, {999, "boo"}})
+
 	// ExecContext returns an error if ANY of the statements can't be executed. This also differs from the behavior of QueryContext.
 	_, err = conn.ExecContext(ctx, "INSERT into example_table VALUES (100, 'woo'); "+
 		"INSERT into example_table VALUES (1, 2, 'too many'); SET @allStatementsExecuted=1;")
@@ -146,15 +150,13 @@ func TestMultiStatementsExecContext(t *testing.T) {
 		require.Equal(t, "Error 1136 (21S01): Column count doesn't match value count at row 1", err.Error())
 	}
 
+	// Assert that the first insert statement was executed before the error occurred
+	requireResults(t, conn, "SELECT * FROM example_table ORDER BY id;",
+		[][]any{{100, "woo"}, {996, "loo"}, {997, "goo"}, {998, "foo"}, {999, "boo"}})
+
 	// Once an error occurs, additional statements are NOT executed. This code tests that the last SET statement
 	// above was NOT executed.
-	rows, err := conn.QueryContext(ctx, "SELECT @allStatementsExecuted;")
-	var v any
-	require.NoError(t, err)
-	require.True(t, rows.Next())
-	require.NoError(t, rows.Scan(&v))
-	require.Nil(t, v)
-	require.NoError(t, rows.Close())
+	requireResults(t, conn, "SELECT @allStatementsExecuted;", [][]any{{nil}})
 }
 
 // TestMultiStatementsQueryContext tests that using QueryContext to run a multi-statement query works as expected and
@@ -584,6 +586,30 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 	require.NoError(t, err)
 
 	return conn, cleanUpFunc
+}
+
+// requireResults uses |conn| to run the specified |query| and asserts that the results
+// match |expected|. If any differences are encountered, the current test fails.
+func requireResults(t *testing.T, conn *sql.Conn, query string, expected [][]any) {
+	ctx := context.Background()
+	vals := make([]any, len(expected[0]))
+
+	rows, err := conn.QueryContext(ctx, query)
+	require.NoError(t, err)
+
+	for _, expectedRow := range expected {
+		for i := range vals {
+			vals[i] = &vals[i]
+		}
+		require.True(t, rows.Next())
+		require.NoError(t, rows.Scan(vals...))
+		for i, expectedVal := range expectedRow {
+			require.EqualValues(t, expectedVal, vals[i])
+		}
+	}
+
+	require.False(t, rows.Next())
+	require.NoError(t, rows.Close())
 }
 
 func encodeDir(dir string) string {
