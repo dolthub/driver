@@ -15,12 +15,12 @@ type doltTx struct {
 
 // Commit finishes the transaction.
 func (tx *doltTx) Commit() error {
-	_, _, err := tx.se.Query(tx.gmsCtx, "COMMIT;")
+	_, _, _, err := tx.se.Query(tx.gmsCtx, "COMMIT;")
 	return translateError(err)
 }
 
 // Rollback cancels the transaction.
 func (tx *doltTx) Rollback() error {
-	_, _, err := tx.se.Query(tx.gmsCtx, "ROLLBACK;")
+	_, _, _, err := tx.se.Query(tx.gmsCtx, "ROLLBACK;")
 	return translateError(err)
 }

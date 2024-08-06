@@ -134,7 +134,7 @@ func (stmt *doltStmt) execWithArgs(args []driver.Value) (gms.Schema, gms.RowIter
 		return nil, nil, err
 	}
 
-	sch, itr, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.gmsCtx, stmt.query, nil, bindings)
+	sch, itr, _, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.gmsCtx, stmt.query, nil, bindings, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -150,7 +150,7 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 	if len(args) != 0 {
 		sch, rowIter, err = stmt.execWithArgs(args)
 	} else {
-		sch, rowIter, err = stmt.se.Query(stmt.gmsCtx, stmt.query)
+		sch, rowIter, _, err = stmt.se.Query(stmt.gmsCtx, stmt.query)
 	}
 	if err != nil {
 		return nil, translateError(err)

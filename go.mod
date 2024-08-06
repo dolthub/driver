@@ -5,9 +5,9 @@ go 1.22.2
 toolchain go1.22.3
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20240702155756-bcf4dd5f5cc1
-	github.com/dolthub/go-mysql-server v0.18.2-0.20240702022058-d7eb602c04ee
-	github.com/dolthub/vitess v0.0.0-20240709194214-7926ea9d425d
+	github.com/dolthub/dolt/go v0.40.5-0.20240806200513-594fd2d2d772
+	github.com/dolthub/go-mysql-server v0.18.2-0.20240806192518-d88bd6d1bd52
+	github.com/dolthub/vitess v0.0.0-20240730224954-d707fadb2e04
 	github.com/go-sql-driver/mysql v1.7.2-0.20231213112541-0004702b931d
 	github.com/stretchr/testify v1.8.4
 	gorm.io/driver/mysql v1.5.6
@@ -115,7 +115,7 @@ require (
 	google.golang.org/grpc v1.61.0 // indirect
 	google.golang.org/protobuf v1.32.0 // indirect
 	gopkg.in/errgo.v2 v2.1.0 // indirect
-	gopkg.in/square/go-jose.v2 v2.6.0 // indirect
+	gopkg.in/go-jose/go-jose.v2 v2.6.3 // indirect
 	gopkg.in/src-d/go-errors.v1 v1.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
