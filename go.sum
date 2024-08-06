@@ -246,8 +246,8 @@ github.com/dimchansky/utfbom v1.1.0/go.mod h1:rO41eb7gLfo8SF1jd9F8HplJm1Fewwi4mQ
 github.com/dimchansky/utfbom v1.1.1/go.mod h1:SxdoEBH5qIqFocHMyGOXVAybYJdr71b1Q/j0mACtrfE=
 github.com/dnaeon/go-vcr v1.1.0/go.mod h1:M7tiix8f0r6mKKJ3Yq/kqU1OYf3MnfmBWVbPx/yU9ko=
 github.com/dnaeon/go-vcr v1.2.0/go.mod h1:R4UdLID7HZT3taECzJs4YgbbH6PIGXB6W/sc5OLb6RQ=
-github.com/dolthub/dolt/go v0.40.5-0.20240806193947-d2c5f5cd646f h1:bIZgaIo9k4bwbnFFUzgmniDxTw0LVnBO4ETjZOPQMFU=
-github.com/dolthub/dolt/go v0.40.5-0.20240806193947-d2c5f5cd646f/go.mod h1:MzVfv9HJEEw6WJEZmRb1k/iZU1jHY+szHe4bJjd84JM=
+github.com/dolthub/dolt/go v0.40.5-0.20240806200513-594fd2d2d772 h1:MwfujvqGQkhjn7+EBgcRtDT2/NVmvl/sDsI7rxaQjkQ=
+github.com/dolthub/dolt/go v0.40.5-0.20240806200513-594fd2d2d772/go.mod h1:MzVfv9HJEEw6WJEZmRb1k/iZU1jHY+szHe4bJjd84JM=
 github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi v0.0.0-20240212175631-02e9f99a3a9b h1:VehmKUF425NgXpRQVYMPzJx6rWZaJ2cbTwTTwXlrbiM=
 github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi v0.0.0-20240212175631-02e9f99a3a9b/go.mod h1:gHeHIDGU7em40EhFTliq62pExFcc1hxDTIZ9g5UqXYM=
 github.com/dolthub/flatbuffers v1.13.0-dh.1 h1:OWJdaPep22N52O/0xsUevxJ6Qfw1M2txCjZPOdjXybE=
