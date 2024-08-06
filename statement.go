@@ -134,7 +134,7 @@ func (stmt *doltStmt) execWithArgs(args []driver.Value) (gms.Schema, gms.RowIter
 		return nil, nil, err
 	}
 
-	sch, itr, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.gmsCtx, stmt.query, nil, bindings)
+	sch, itr, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.gmsCtx, stmt.query, nil, bindings, nil)
 	if err != nil {
 		return nil, nil, err
 	}
