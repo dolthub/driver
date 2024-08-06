@@ -98,7 +98,7 @@ func (d *DoltConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 		return nil, fmt.Errorf("isolation level not supported '%d'", opts.Isolation)
 	}
 
-	_, _, err := d.se.Query(d.gmsCtx, "BEGIN;")
+	_, _, _, err := d.se.Query(d.gmsCtx, "BEGIN;")
 	if err != nil {
 		return nil, translateError(err)
 	}
