@@ -2,13 +2,13 @@ package embedded
 
 import (
 	"database/sql/driver"
+	"github.com/dolthub/vitess/go/vt/sqlparser"
 	"strconv"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/go-mysql-server/sql/types"
 	"github.com/dolthub/vitess/go/sqltypes"
-	querypb "github.com/dolthub/vitess/go/vt/proto/query"
 )
 
 // doltMultiStmt represents a collection of statements to be executed against a
@@ -99,12 +99,19 @@ func (stmt *doltStmt) NumInput() int {
 	return -1
 }
 
-func argsToBindings(args []driver.Value) (map[string]*querypb.BindVariable, error) {
-	bindings := make(map[string]*querypb.BindVariable)
-	var err error
+func argsToBindings(args []driver.Value) (map[string]sqlparser.Expr, error) {
+	bindings := make(map[string]sqlparser.Expr)
 	for i := range args {
 		vIdx := "v" + strconv.FormatInt(int64(i+1), 10)
-		bindings[vIdx], err = sqltypes.BuildBindVariable(args[i])
+		bv, err := sqltypes.BuildBindVariable(args[i])
+		if err != nil {
+			return nil, err
+		}
+		v, err := sqltypes.BindVariableToValue(bv)
+		if err != nil {
+			return nil, err
+		}
+		bindings[vIdx], err = sqlparser.ExprFromValue(v)
 		if err != nil {
 			return nil, err
 		}
