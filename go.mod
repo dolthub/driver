@@ -5,9 +5,9 @@ go 1.22.2
 toolchain go1.22.3
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20240806200513-594fd2d2d772
-	github.com/dolthub/go-mysql-server v0.18.2-0.20240806192518-d88bd6d1bd52
-	github.com/dolthub/vitess v0.0.0-20240730224954-d707fadb2e04
+	github.com/dolthub/dolt/go v0.40.5-0.20240918224257-88ae8c98593a
+	github.com/dolthub/go-mysql-server v0.18.2-0.20240918214853-7e76e21750a6
+	github.com/dolthub/vitess v0.0.0-20240916204416-9d4d4a09b1d9
 	github.com/go-sql-driver/mysql v1.7.2-0.20231213112541-0004702b931d
 	github.com/stretchr/testify v1.8.4
 	gorm.io/driver/mysql v1.5.6
@@ -34,7 +34,7 @@ require (
 	github.com/dolthub/dolt/go/gen/proto/dolt/services/eventsapi v0.0.0-20240212175631-02e9f99a3a9b // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/fslock v0.0.3 // indirect
-	github.com/dolthub/go-icu-regex v0.0.0-20230524105445-af7e7991c97e // indirect
+	github.com/dolthub/go-icu-regex v0.0.0-20240916130659-0118adc6b662 // indirect
 	github.com/dolthub/gozstd v0.0.0-20240423170813-23a2903bca63 // indirect
 	github.com/dolthub/jsonpath v0.0.2-0.20240227200619-19675ab05c71 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
