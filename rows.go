@@ -139,7 +139,7 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 		} else if geomValue, ok := nextRow[i].(types.GeometryValue); ok {
 			dest[i] = geomValue.Serialize()
 		} else if enumType, ok := rows.sch[i].Type.(gms.EnumType); ok {
-			if v, _, err := enumType.Convert(nextRow[i]); err != nil {
+			if v, _, err := enumType.Convert(rows.gmsCtx, nextRow[i]); err != nil {
 				return fmt.Errorf("could not convert to expected enum type for column %d: %w", i, err)
 			} else if enumStr, ok := enumType.At(int(v.(uint16))); !ok {
 				return fmt.Errorf("not a valid enum index for column %d: %v", i, v)
@@ -147,7 +147,7 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 				dest[i] = enumStr
 			}
 		} else if setType, ok := rows.sch[i].Type.(gms.SetType); ok {
-			if v, _, err := setType.Convert(nextRow[i]); err != nil {
+			if v, _, err := setType.Convert(rows.gmsCtx, nextRow[i]); err != nil {
 				return fmt.Errorf("could not convert to expected set type for column %d: %w", i, err)
 			} else if setStr, err := setType.BitsToString(v.(uint64)); err != nil {
 				return fmt.Errorf("could not convert value to set string for column %d: %w", i, err)
