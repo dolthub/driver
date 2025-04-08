@@ -21,7 +21,7 @@ func errExit(wrapFormat string, err error) {
 			err = fmt.Errorf(wrapFormat, err)
 		}
 
-		fmt.Fprintf(os.Stderr, err.Error())
+		fmt.Fprint(os.Stderr, err.Error())
 		os.Exit(1)
 	}
 }
