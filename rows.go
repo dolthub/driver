@@ -10,64 +10,82 @@ import (
 	"github.com/dolthub/go-mysql-server/sql/types"
 )
 
-// doltMultiRows implements driver.RowsNextResultSet by aggregating a set of individual
-// doltRows instances.
+// doltMultiRows implements driver.RowsNextResultSet by aggregating a
+// set of individual doltRows instances. Each doltRows is a lazy
+// producer to get the row iter, and they are run on demand. The
+// current result set is in currentRowSet, with the index of its
+// producer in currentIdx.
 type doltMultiRows struct {
-	rowSets       []*doltRows
-	currentRowSet int
+	rowSets       []func()*doltRows
+	currentIdx    int
+	currentRowSet *doltRows
 }
 
 var _ driver.RowsNextResultSet = (*doltMultiRows)(nil)
 
 func (d *doltMultiRows) Columns() []string {
-	if d.currentRowSet >= len(d.rowSets) {
+	if d.currentRowSet == nil {
 		return nil
 	}
-
-	return d.rowSets[d.currentRowSet].Columns()
+	return d.currentRowSet.Columns()
 }
 
-// Close implements the driver.Rows interface. When Close is called on a doltMultiRows instance,
-// it will close all individual doltRows instances that it contains. If any errors are encountered
-// while closing the individual row sets, the first error will be returned, after attempting to close
-// all row sets.
+// Close implements the driver.Rows interface. When Close is called on
+// a doltMultiRows instance, it will close the open-and-unclosed
+// doltRows instance that it contains, if there is one. If any errors
+// are encountered while closing the row set, that error will be
+// returned.
 func (d *doltMultiRows) Close() error {
-	var retErr error
-	for _, rowSet := range d.rowSets {
-		if err := rowSet.Close(); err != nil {
-			retErr = err
-		}
+	rowSet := d.currentRowSet
+	d.currentRowSet = nil
+	d.rowSets = nil
+	if rowSet != nil {
+		return rowSet.Close()
 	}
-	return retErr
+	return nil
 }
 
+// Return the next row from the current result set.
 func (d *doltMultiRows) Next(dest []driver.Value) error {
-	if d.currentRowSet >= len(d.rowSets) {
+	if d.currentRowSet == nil {
 		return io.EOF
 	}
-
-	return d.rowSets[d.currentRowSet].Next(dest)
+	return d.currentRowSet.Next(dest)
 }
 
+// Called by the database/sql implementation at the end of a result
+// set. Simply returns |true| if there are more queries we need to
+// run. It is OK if this returns |true| but |NextResultSet| ends up
+// returning |io.EOF| after we run all the remaining queries.
 func (d *doltMultiRows) HasNextResultSet() bool {
-	idx := d.currentRowSet + 1
-	for ; idx < len(d.rowSets); idx++ {
-		if d.rowSets[idx].isQueryResultSet || d.rowSets[idx].err != nil {
-			return true
-		}
-	}
-	return false
+	return (d.currentIdx+1) < len(d.rowSets)
 }
 
+// Called anytime we are going on to the next result set, including at
+// the end of an existing result set or in the middle of one at the
+// request of the caller.
+//
+// This is responsible for closing the existing result set and for
+// running the remaining queries until we get to an iterator that has
+// a result set.
+//
+// Returns io.EOF if we have run all the queries and there are no
+// result sets to iterate.
 func (d *doltMultiRows) NextResultSet() error {
-	idx := d.currentRowSet + 1
-	for ; idx < len(d.rowSets); idx++ {
-		if d.rowSets[idx].isQueryResultSet || d.rowSets[idx].err != nil {
-			// Update the current row set index when we find the next result set for a query. If we encountered an
-			// error running the statement earlier and saved an error in the row set, return that error now that the
-			// result set with the error has been requested. This matches the MySQL driver's behavior.
-			d.currentRowSet = idx
-			return d.rowSets[d.currentRowSet].err
+	err := d.currentRowSet.Close()
+	if err != nil {
+		return err
+	}
+	d.currentRowSet = nil
+	for d.currentIdx = d.currentIdx + 1; d.currentIdx < len(d.rowSets); d.currentIdx++ {
+		iter := d.rowSets[d.currentIdx]()
+		if iter.err != nil {
+			return iter.err
+		} else if iter.isQueryResultSet {
+			d.currentRowSet = iter
+			return nil
+		} else {
+			iter.Close()
 		}
 	}
 	return io.EOF
