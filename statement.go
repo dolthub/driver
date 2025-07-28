@@ -2,7 +2,6 @@ package embedded
 
 import (
 	"database/sql/driver"
-	"fmt"
 	"strconv"
 
 	"github.com/dolthub/vitess/go/vt/sqlparser"
