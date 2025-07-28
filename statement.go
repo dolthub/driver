@@ -2,8 +2,9 @@ package embedded
 
 import (
 	"database/sql/driver"
-	"github.com/dolthub/vitess/go/vt/sqlparser"
 	"strconv"
+
+	"github.com/dolthub/vitess/go/vt/sqlparser"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
@@ -48,36 +49,31 @@ func (d doltMultiStmt) Exec(args []driver.Value) (result driver.Result, err erro
 }
 
 func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
-	var multiResultSet doltMultiRows
+	var ret doltMultiRows
 	for _, stmt := range d.stmts {
-		rows, err := stmt.Query(args)
-		if err != nil {
-			// If an error occurs, we don't execute any more statements in the multistatement query. Instead, we
-			// capture the error in a doltRows instance, so that rows.NextResultSet() will return the error when
-			// the caller requests that result set. This is to match the MySQL driver's behavior.
-			multiResultSet.rowSets = append(multiResultSet.rowSets, &doltRows{err: err})
+		ret.rowSets = append(ret.rowSets, func()*doltRows{
+			rows, err := stmt.Query(args)
+			if err != nil {
+				return &doltRows{err: err}
+			}
+			return rows.(*doltRows)
+		})
+	}
+	for ret.currentIdx = 0; ret.currentIdx < len(ret.rowSets); ret.currentIdx++ {
+		rows := ret.rowSets[ret.currentIdx]()
+		if rows.err != nil {
+			return nil, rows.err
+		} else if rows.isQueryResultSet {
+			ret.currentRowSet = rows
 			break
 		} else {
-			multiResultSet.rowSets = append(multiResultSet.rowSets, rows.(*doltRows))
+			err := rows.Close()
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
-
-	// Position the current result set index at the first statement that is a query, with a real result set. In
-	// other words, skip over any statements that don't actually return results sets (e.g. INSERT or DDL statements).
-	for ; multiResultSet.currentRowSet < len(multiResultSet.rowSets); multiResultSet.currentRowSet++ {
-		if multiResultSet.rowSets[multiResultSet.currentRowSet].isQueryResultSet ||
-			multiResultSet.rowSets[multiResultSet.currentRowSet].err != nil {
-			break
-		}
-	}
-
-	// If an error occurred before any query result set, go ahead and return the error, without any result set.
-	if multiResultSet.currentRowSet < len(multiResultSet.rowSets) &&
-		multiResultSet.rowSets[multiResultSet.currentRowSet].err != nil {
-		return nil, multiResultSet.rowSets[multiResultSet.currentRowSet].err
-	} else {
-		return &multiResultSet, nil
-	}
+	return &ret, nil
 }
 
 // doltStmt represents a single statement to be executed against a Dolt database.
