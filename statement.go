@@ -61,7 +61,6 @@ func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 		})
 	}
 	for ret.currentIdx = 0; ret.currentIdx < len(ret.rowSets); ret.currentIdx++ {
-		fmt.Println(ret.currentIdx, len(ret.rowSets))
 		rows := ret.rowSets[ret.currentIdx]()
 		if rows.err != nil {
 			return nil, rows.err
