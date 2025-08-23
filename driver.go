@@ -78,7 +78,8 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		config.UserEmailKey: email[0],
 	})
 
-	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ds.Directory, "0.40.17")
+	// fs already switched to ds.Directory, so passing "." as a path
+	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", "0.40.17")
 	if err != nil {
 		return nil, err
 	}
