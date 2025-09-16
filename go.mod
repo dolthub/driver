@@ -1,14 +1,14 @@
 module github.com/dolthub/driver
 
-go 1.24.0
+go 1.24.6
 
-toolchain go1.24.1
+toolchain go1.24.7
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20250728185147-4497789ae44c
-	github.com/dolthub/go-mysql-server v0.20.1-0.20250725204146-7bc2294a9cb2
-	github.com/dolthub/vitess v0.0.0-20250611225316-90a5898bfe26
-	github.com/go-sql-driver/mysql v1.9.1
+	github.com/dolthub/dolt/go v0.40.5-0.20250916084833-f121f4db6fdd
+	github.com/dolthub/go-mysql-server v0.20.1-0.20250916073142-59b34ad42ad7
+	github.com/dolthub/vitess v0.0.0-20250915221346-753c44800850
+	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.10.0
 	gorm.io/driver/mysql v1.5.6
 	gorm.io/gorm v1.25.10
@@ -59,20 +59,20 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12 // indirect
-	github.com/dolthub/eventsapi_schema v0.0.0-20250725194025-a087efa1ee55 // indirect
+	github.com/dolthub/eventsapi_schema v0.0.0-20250915094920-eadfd39051ca // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/fslock v0.0.3 // indirect
-	github.com/dolthub/go-icu-regex v0.0.0-20250327004329-6799764f2dad // indirect
+	github.com/dolthub/go-icu-regex v0.0.0-20250916051405-78a38d478790 // indirect
 	github.com/dolthub/gozstd v0.0.0-20240423170813-23a2903bca63 // indirect
 	github.com/dolthub/jsonpath v0.0.2-0.20240227200619-19675ab05c71 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.32.4 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.2.1 // indirect
 	github.com/esote/minmaxheap v1.0.0 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
-	github.com/go-kit/kit v0.13.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
@@ -110,7 +110,6 @@ require (
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/sony/gobreaker v0.5.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
-	github.com/tetratelabs/wazero v1.8.2 // indirect
 	github.com/vbauerster/mpb/v8 v8.7.2 // indirect
 	github.com/xitongsys/parquet-go v1.6.2 // indirect
 	github.com/xitongsys/parquet-go-source v0.0.0-20240122235623-d6294584ab18 // indirect
@@ -126,7 +125,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.36.0 // indirect
 	go.opentelemetry.io/otel/trace v1.36.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.26.0 // indirect
+	go.uber.org/zap v1.27.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/exp v0.0.0-20240205201215-2c58cdc269a3 // indirect
 	golang.org/x/mod v0.25.0 // indirect
