@@ -619,3 +619,120 @@ func encodeDir(dir string) string {
 	}
 	return dir
 }
+
+// TestTransactionCommit tests that transactions can be committed successfully and changes are persisted.
+func TestTransactionCommit(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+
+	// Create a test table
+	_, err := conn.ExecContext(ctx, "CREATE TABLE tx_test (id int primary key, value varchar(256));")
+	require.NoError(t, err)
+
+	// Begin a transaction
+	tx, err := conn.BeginTx(ctx, nil)
+	require.NoError(t, err)
+
+	// Insert data within the transaction
+	_, err = conn.ExecContext(ctx, "INSERT INTO tx_test VALUES (1, 'committed');")
+	require.NoError(t, err)
+
+	// Commit the transaction
+	err = tx.Commit()
+	require.NoError(t, err)
+
+	// Verify the data was persisted
+	requireResults(t, conn, "SELECT * FROM tx_test;", [][]any{{1, "committed"}})
+}
+
+// TestTransactionRollback tests that transactions can be rolled back and changes are discarded.
+func TestTransactionRollback(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+
+	// Create a test table and insert initial data
+	_, err := conn.ExecContext(ctx, "CREATE TABLE tx_test (id int primary key, value varchar(256));")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "INSERT INTO tx_test VALUES (1, 'initial');")
+	require.NoError(t, err)
+
+	// Begin a transaction
+	tx, err := conn.BeginTx(ctx, nil)
+	require.NoError(t, err)
+
+	// Insert data within the transaction
+	_, err = conn.ExecContext(ctx, "INSERT INTO tx_test VALUES (2, 'rolled_back');")
+	require.NoError(t, err)
+
+	// Rollback the transaction
+	err = tx.Rollback()
+	require.NoError(t, err)
+
+	// Verify only the initial data exists (the insert was rolled back)
+	requireResults(t, conn, "SELECT * FROM tx_test ORDER BY id;", [][]any{{1, "initial"}})
+}
+
+// TestTransactionMultipleOperations tests that multiple operations within a transaction
+// are all committed or rolled back together.
+func TestTransactionMultipleOperations(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+
+	// Create a test table
+	_, err := conn.ExecContext(ctx, "CREATE TABLE tx_test (id int primary key, value varchar(256));")
+	require.NoError(t, err)
+
+	// Test commit with multiple operations
+	tx, err := conn.BeginTx(ctx, nil)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx, "INSERT INTO tx_test VALUES (1, 'first');")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "INSERT INTO tx_test VALUES (2, 'second');")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "INSERT INTO tx_test VALUES (3, 'third');")
+	require.NoError(t, err)
+
+	err = tx.Commit()
+	require.NoError(t, err)
+
+	requireResults(t, conn, "SELECT * FROM tx_test ORDER BY id;",
+		[][]any{{1, "first"}, {2, "second"}, {3, "third"}})
+
+	// Test rollback with multiple operations
+	tx, err = conn.BeginTx(ctx, nil)
+	require.NoError(t, err)
+
+	_, err = conn.ExecContext(ctx, "INSERT INTO tx_test VALUES (4, 'fourth');")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "INSERT INTO tx_test VALUES (5, 'fifth');")
+	require.NoError(t, err)
+
+	err = tx.Rollback()
+	require.NoError(t, err)
+
+	// Verify the rollback worked - should still only have the first 3 rows
+	requireResults(t, conn, "SELECT * FROM tx_test ORDER BY id;",
+		[][]any{{1, "first"}, {2, "second"}, {3, "third"}})
+}
+
+// TestBeginTxUnsupportedIsolationLevel tests that BeginTx returns an error for unsupported isolation levels.
+func TestBeginTxUnsupportedIsolationLevel(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+
+	// Try to begin a transaction with an unsupported isolation level
+	_, err := conn.BeginTx(ctx, &sql.TxOptions{
+		Isolation: sql.LevelReadUncommitted,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "isolation level not supported")
+}
