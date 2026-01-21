@@ -52,7 +52,7 @@ This driver embeds Dolt in-process. Under the hood it creates a single shared Do
 Important notes:
 
 - **Call `db.Close()`** when you're done to release embedded resources and close the shared engine.
-- **Engine initialization is lazy**: `sql.Open(...)` does not necessarily create the engine immediately. The engine is created on first use (e.g. `db.Ping()`, `db.Query(...)`, `db.Exec(...)`).
+- **Engine initialization happens during `sql.Open(...)`**: DSN parsing / validation and embedded engine initialization happen up front, so `sql.Open(...)` can return an error if initialization fails.
 
 ### Dolt Data Source Names
 

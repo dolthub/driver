@@ -94,7 +94,8 @@ func (c *doltConnector) Connect(ctx context.Context) (driver.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	if database, ok := c.ds.Params[DatabaseParam]; ok && len(database) == 1 {
+	if database, ok := c.ds.Params[DatabaseParam]; ok && len(database) > 0 {
+		// OpenConnector validates that if DatabaseParam is present, it has exactly one value.
 		gmsCtx.SetCurrentDatabase(database[0])
 	}
 	if c.ds.ParamIsTrue(ClientFoundRowsParam) {
@@ -180,13 +181,17 @@ func (d *doltDriver) OpenConnector(dataSource string) (driver.Connector, error) 
 
 	// Validate required parameters up-front so sql.Open can fail fast.
 	name := ds.Params[CommitNameParam]
-	if name == nil {
+	if name == nil || len(name) != 1 {
 		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitNameParam)
 	}
 
 	email := ds.Params[CommitEmailParam]
-	if email == nil {
+	if email == nil || len(email) != 1 {
 		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitEmailParam)
+	}
+
+	if database, ok := ds.Params[DatabaseParam]; ok && len(database) != 1 {
+		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s' at most once", dataSource, DatabaseParam)
 	}
 
 	// Validate the directory exists and is a directory.
@@ -214,13 +219,20 @@ func (d *doltDriver) OpenConnector(dataSource string) (driver.Connector, error) 
 		Autocommit: true,
 	}
 
-	return &doltConnector{
+	c := &doltConnector{
 		driver: d,
 		ds:     ds,
 		fs:     fs,
 		cfg:    cfg,
 		seCfg:  seCfg,
-	}, nil
+	}
+
+	// Eagerly initialize the shared engine so sql.Open fails fast on initialization errors.
+	if _, err := c.sqlEngine(); err != nil {
+		return nil, err
+	}
+
+	return c, nil
 }
 
 // Open opens and returns a connection to the datasource referenced by the string provided using the options provided.
