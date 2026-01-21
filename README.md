@@ -43,7 +43,16 @@ Then we will open a connection to the database:
 db, err := sql.Open("dolt", "file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename")
 ```
 
-Now you can use your `db` as you would normally, however you have access to all of dolt's special features as well. 
+Now you can use your `db` as you would normally, however you have access to all of dolt's special features as well.
+
+### Engine Lifetime / Resource Management
+
+This driver embeds Dolt in-process. Under the hood it creates a single shared Dolt SQL engine **per `*sql.DB`** (per call to `sql.Open`), and `database/sql` will create and close many pooled connections on top of that.
+
+Important notes:
+
+- **Call `db.Close()`** when you're done to release embedded resources and close the shared engine.
+- **Engine initialization is lazy**: `sql.Open(...)` does not necessarily create the engine immediately. The engine is created on first use (e.g. `db.Ping()`, `db.Query(...)`, `db.Exec(...)`).
 
 ### Dolt Data Source Names
 

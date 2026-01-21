@@ -73,11 +73,8 @@ func (d *DoltConn) prepareMultiStatement(query string) (*doltMultiStmt, error) {
 
 // Close releases the resources held by the DoltConn instance
 func (d *DoltConn) Close() error {
-	err := d.se.Close()
-	if err != context.Canceled {
-		return err
-	}
-
+	// Note: the SqlEngine lifetime is owned by the Connector / *sql.DB, not by individual connections.
+	// Closing the engine here would break connection pooling semantics.
 	return nil
 }
 
