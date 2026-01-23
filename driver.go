@@ -4,15 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"fmt"
+	"time"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
-	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
-	"github.com/dolthub/dolt/go/libraries/doltcore/env"
-	"github.com/dolthub/dolt/go/libraries/utils/config"
-	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 	gmssql "github.com/dolthub/go-mysql-server/sql"
-	"github.com/dolthub/vitess/go/mysql"
 )
 
 const (
@@ -23,6 +18,17 @@ const (
 	DatabaseParam        = "database"
 	MultiStatementsParam = "multistatements"
 	ClientFoundRowsParam = "clientfoundrows"
+
+	// Dolt embedded mode tuning
+	NoCacheParam           = "nocache"           // disable Dolt in-process singleton DB cache (default false)
+	FailOnLockTimeoutParam = "failonlocktimeout" // fail-fast on journal lock timeout vs read-only fallback (default false)
+
+	// Retry policy parameters (embedded mode contention handling)
+	RetryParam            = "retry"            // true|false (default false)
+	RetryTimeoutParam     = "retrytimeout"     // e.g. "2s" (default 2s)
+	RetryMaxAttemptsParam = "retrymaxattempts" // e.g. "10" (default 10)
+	RetryInitialDelayParam = "retryinitialdelay" // e.g. "25ms" (default 25ms)
+	RetryMaxDelayParam     = "retrymaxdelay"     // e.g. "250ms" (default 250ms)
 )
 
 var _ driver.Driver = (*doltDriver)(nil)
@@ -44,93 +50,68 @@ type doltDriver struct {
 // run a new subdirectory will be created in this path.
 func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 	ctx := context.Background()
-	var fs filesys.Filesys = filesys.LocalFS
 
 	ds, err := ParseDataSource(dataSource)
 	if err != nil {
 		return nil, err
 	}
 
-	exists, isDir := fs.Exists(ds.Directory)
-	if !exists {
-		return nil, fmt.Errorf("'%s' does not exist", ds.Directory)
-	} else if !isDir {
-		return nil, fmt.Errorf("%s: is a file.  Need to specify a directory", ds.Directory)
-	}
-
-	fs, err = fs.WithWorkingDir(ds.Directory)
+	// Parse retry policy up-front so we can apply it to open-time contention failures.
+	rp, err := ParseRetryPolicy(ds)
 	if err != nil {
 		return nil, err
 	}
 
-	name := ds.Params[CommitNameParam]
-	if name == nil {
-		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitNameParam)
+	start := time.Now()
+	attempt := 0
+	delay := rp.InitialDelay
+	if delay <= 0 {
+		delay = 10 * time.Millisecond
 	}
 
-	email := ds.Params[CommitEmailParam]
-	if email == nil {
-		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitEmailParam)
-	}
+	var se *engine.SqlEngine
+	var gmsCtx *gmssql.Context
+	for {
+		attempt++
 
-	cfg := config.NewMapConfig(map[string]string{
-		config.UserNameKey:  name[0],
-		config.UserEmailKey: email[0],
-	})
+		se, gmsCtx, _, err = openEmbeddedEngine(ctx, ds)
+		if err == nil {
+			break
+		}
 
-	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ds.Directory, "0.40.17")
-	if err != nil {
-		return nil, err
-	}
+		terr := translateIfNeeded(err)
+		if !(rp.Enabled && (isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr))) {
+			return nil, err
+		}
 
-	seCfg := &engine.SqlEngineConfig{
-		IsReadOnly: false,
-		ServerUser: "root",
-		Autocommit: true,
-	}
+		if rp.MaxAttempts > 0 && attempt >= rp.MaxAttempts {
+			return nil, err
+		}
+		if rp.Timeout > 0 && time.Since(start) >= rp.Timeout {
+			return nil, err
+		}
 
-	se, err := engine.NewSqlEngine(ctx, mrEnv, seCfg)
-	if err != nil {
-		return nil, err
-	}
-
-	gmsCtx, err := se.NewLocalContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if database, ok := ds.Params[DatabaseParam]; ok && len(database) == 1 {
-		gmsCtx.SetCurrentDatabase(database[0])
-	}
-	if ds.ParamIsTrue(ClientFoundRowsParam) {
-		client := gmsCtx.Client()
-		gmsCtx.SetClient(gmssql.Client{
-			User:         client.User,
-			Address:      client.Address,
-			Capabilities: client.Capabilities | mysql.CapabilityClientFoundRows,
-		})
+		sleep := delay
+		if rp.MaxDelay > 0 && sleep > rp.MaxDelay {
+			sleep = rp.MaxDelay
+		}
+		if rp.Timeout > 0 {
+			remaining := rp.Timeout - time.Since(start)
+			if remaining <= 0 {
+				return nil, err
+			}
+			if sleep > remaining {
+				sleep = remaining
+			}
+		}
+		sleep = jitterDuration(sleep)
+		time.Sleep(sleep)
 	}
 
 	return &DoltConn{
-		DataSource: ds,
-		se:         se,
-		gmsCtx:     gmsCtx,
+		DataSource:   ds,
+		se:           se,
+		gmsCtx:       gmsCtx,
+		retryPolicy:  rp,
 	}, nil
-}
-
-// LoadMultiEnvFromDir looks at each subfolder of the given path as a Dolt repository and attempts to return a MultiRepoEnv
-// with initialized environments for each of those subfolder data repositories. subfolders whose name starts with '.' are
-// skipped.
-func LoadMultiEnvFromDir(
-	ctx context.Context,
-	cfg config.ReadWriteConfig,
-	fs filesys.Filesys,
-	path, version string,
-) (*env.MultiRepoEnv, error) {
-
-	multiDbDirFs, err := fs.WithWorkingDir(path)
-	if err != nil {
-		return nil, errhand.VerboseErrorFromError(err)
-	}
-
-	return env.MultiEnvForDirectory(ctx, cfg, multiDbDirFs, version, nil)
 }

@@ -3,9 +3,10 @@ module github.com/dolthub/driver
 go 1.25.3
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20260114190420-4dd08b249b63
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260109215716-eb63e475be4b
-	github.com/dolthub/vitess v0.0.0-20260108222406-f8a2587c4954
+	github.com/dolthub/dolt/go v0.40.5-0.20260123230441-06d29311728f
+	github.com/dolthub/fslock v0.0.3
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260122230403-2a3380188573
+	github.com/dolthub/vitess v0.0.0-20260121194826-a5ce52b608e4
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
 	gorm.io/driver/mysql v1.5.6
@@ -59,7 +60,6 @@ require (
 	github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12 // indirect
 	github.com/dolthub/eventsapi_schema v0.0.0-20250915094920-eadfd39051ca // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
-	github.com/dolthub/fslock v0.0.3 // indirect
 	github.com/dolthub/go-icu-regex v0.0.0-20250916051405-78a38d478790 // indirect
 	github.com/dolthub/gozstd v0.0.0-20240423170813-23a2903bca63 // indirect
 	github.com/dolthub/jsonpath v0.0.2-0.20240227200619-19675ab05c71 // indirect

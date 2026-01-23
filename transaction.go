@@ -2,25 +2,38 @@ package embedded
 
 import (
 	"database/sql/driver"
-	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
 )
 
 var _ driver.Tx = (*doltTx)(nil)
 
 type doltTx struct {
+	conn   *DoltConn
 	gmsCtx *gms.Context
-	se     *engine.SqlEngine
 }
 
 // Commit finishes the transaction.
 func (tx *doltTx) Commit() error {
-	_, _, _, err := tx.se.Query(tx.gmsCtx, "COMMIT;")
+	se, gmsCtx := tx.conn.getEngineAndContext()
+	if tx.gmsCtx != nil {
+		gmsCtx = tx.gmsCtx
+	}
+	_, _, _, err := se.Query(gmsCtx, "COMMIT;")
+	if err == nil {
+		tx.conn.endTx()
+	}
 	return translateError(err)
 }
 
 // Rollback cancels the transaction.
 func (tx *doltTx) Rollback() error {
-	_, _, _, err := tx.se.Query(tx.gmsCtx, "ROLLBACK;")
+	se, gmsCtx := tx.conn.getEngineAndContext()
+	if tx.gmsCtx != nil {
+		gmsCtx = tx.gmsCtx
+	}
+	_, _, _, err := se.Query(gmsCtx, "ROLLBACK;")
+	if err == nil {
+		tx.conn.endTx()
+	}
 	return translateError(err)
 }

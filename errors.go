@@ -1,6 +1,7 @@
 package embedded
 
 import (
+	"errors"
 	"github.com/dolthub/go-mysql-server/sql"
 	"github.com/go-sql-driver/mysql"
 )
@@ -17,4 +18,17 @@ func translateError(err error) error {
 		Number:  uint16(vitessErr.Num),
 		Message: vitessErr.Message,
 	}
+}
+
+// translateIfNeeded preserves existing *mysql.MySQLError instances, otherwise converts
+// go-mysql-server errors into *mysql.MySQLError.
+func translateIfNeeded(err error) error {
+	if err == nil {
+		return nil
+	}
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return err
+	}
+	return translateError(err)
 }
