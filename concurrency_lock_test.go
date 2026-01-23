@@ -208,6 +208,9 @@ func TestHelperProcess_InitSchema(t *testing.T) {
 }
 
 func TestConcurrentOpenWhileWriterHoldsLock_FailsWithoutRetry(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows due to differing process/file locking semantics (tempdir cleanup can fail)")
+	}
 	if runTestsAgainstMySQL {
 		t.Skip("this test is specific to embedded dolt driver filesystem locking")
 	}
