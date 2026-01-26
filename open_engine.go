@@ -3,8 +3,6 @@ package embedded
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
@@ -12,7 +10,6 @@ import (
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
-	"github.com/dolthub/fslock"
 	gmssql "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/vitess/go/mysql"
 )
@@ -32,11 +29,6 @@ func openEmbeddedEngine(ctx context.Context, ds *DoltDataSource) (*engine.SqlEng
 	} else if !isDir {
 		return nil, nil, RetryPolicy{}, fmt.Errorf("%s: is a file.  Need to specify a directory", ds.Directory)
 	}
-
-	// Best-effort: remove a stale noms LOCK file if it exists and is not actually locked.
-	// This matches the failure mode seen in callers where an empty LOCK file can cause
-	// "database is read only" errors even when no process is currently holding the lock.
-	_ = cleanupStaleNomsLock(ds)
 
 	fs, err := fs.WithWorkingDir(ds.Directory)
 	if err != nil {
@@ -109,35 +101,6 @@ func openEmbeddedEngine(ctx context.Context, ds *DoltDataSource) (*engine.SqlEng
 	}
 
 	return se, gmsCtx, rp, nil
-}
-
-func cleanupStaleNomsLock(ds *DoltDataSource) error {
-	if ds == nil {
-		return nil
-	}
-	dbs, ok := ds.Params[DatabaseParam]
-	if !ok || len(dbs) != 1 || dbs[0] == "" {
-		return nil
-	}
-	lockPath := filepath.Join(ds.Directory, dbs[0], ".dolt", "noms", "LOCK")
-	info, err := os.Stat(lockPath)
-	if os.IsNotExist(err) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-
-	l := fslock.New(lockPath)
-	if err := l.TryLock(); err != nil {
-		// Locked by another process, don't touch.
-		return nil
-	}
-	_ = l.Unlock()
-	// If we could lock it, it's safe to remove (Dolt will re-create this file as needed).
-	_ = info // reserved for future heuristics (mtime/size)
-	_ = os.Remove(lockPath)
-	return nil
 }
 
 func loadMultiEnvFromDir(

@@ -3,13 +3,42 @@ package embedded
 import (
 	"context"
 	"database/sql/driver"
-	"math"
-	"math/rand"
+	"errors"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
 )
+
+func newRetryBackOff(ctx context.Context, p RetryPolicy) backoff.BackOff {
+	bo := backoff.NewExponentialBackOff()
+
+	// Match previous defaults and semantics.
+	if p.InitialDelay > 0 {
+		bo.InitialInterval = p.InitialDelay
+	} else {
+		bo.InitialInterval = 10 * time.Millisecond
+	}
+	if p.MaxDelay > 0 {
+		bo.MaxInterval = p.MaxDelay
+	}
+	if p.Timeout > 0 {
+		bo.MaxElapsedTime = p.Timeout
+	} else {
+		bo.MaxElapsedTime = 0 // unlimited
+	}
+	// Approximate existing 0.5x..1.5x jitter.
+	bo.RandomizationFactor = 0.5
+
+	var out backoff.BackOff = bo
+	if p.MaxAttempts > 0 {
+		// MaxRetries is the number of retry attempts after the first try.
+		out = backoff.WithMaxRetries(out, uint64(p.MaxAttempts-1))
+	}
+
+	return backoff.WithContext(out, ctx)
+}
 
 // runQueryWithRetry executes op and retries (with reopen + backoff) when enabled and the error is retryable.
 // Returns the gms context used for the successful attempt (or last attempt).
@@ -24,106 +53,66 @@ func (d *DoltConn) runQueryWithRetry(
 		return sch, itr, gmsCtx, err
 	}
 
-	start := time.Now()
-	attempt := 0
-	delay := p.InitialDelay
-	if delay <= 0 {
-		delay = 10 * time.Millisecond
-	}
+	bo := newRetryBackOff(ctx, p)
 
+	var attempt int
 	var lastErr error
-	for {
+	var lastCtx *gms.Context
+	var sch gms.Schema
+	var itr gms.RowIter
+
+	err := backoff.Retry(func() error {
 		attempt++
 
-		// Respect context cancellation.
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return nil, nil, nil, lastErr
+		// Reopen before retrying to avoid a "stuck read-only" instance.
+		// (This runs on attempts 2..N; backoff sleeps between attempts.)
+		if attempt > 1 {
+			if err := d.reopenEngine(ctx); err != nil {
+				terr := translateIfNeeded(err)
+				if !(isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr)) {
+					lastErr = err
+					return backoff.Permanent(err)
+				}
+				lastErr = err
+				return err
 			}
-			return nil, nil, nil, ctx.Err()
-		default:
 		}
 
 		se, gmsCtx := d.getEngineAndContext()
+		lastCtx = gmsCtx
 		if gmsCtx != nil {
 			gmsCtx.SetQueryTime(time.Now())
 		}
-		sch, itr, err := op(se, gmsCtx)
-		if err == nil {
-			return sch, itr, gmsCtx, nil
+
+		var e error
+		sch, itr, e = op(se, gmsCtx)
+		if e == nil {
+			lastErr = nil
+			return nil
 		}
 
-		// Retry classification on both the raw error and the translated MySQL error.
-		terr := translateIfNeeded(err)
-		if !(isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr)) {
-			return nil, nil, nil, err
-		}
-		lastErr = err
-
-		// Limits
-		if p.MaxAttempts > 0 && attempt >= p.MaxAttempts {
-			return nil, nil, nil, lastErr
-		}
-		if p.Timeout > 0 && time.Since(start) >= p.Timeout {
-			return nil, nil, nil, lastErr
+		terr := translateIfNeeded(e)
+		if !(isRetryableEmbeddedErr(e) || isRetryableEmbeddedErr(terr)) {
+			lastErr = e
+			return backoff.Permanent(e)
 		}
 
-		// Backoff sleep (bounded by timeout remaining).
-		sleep := delay
-		if p.MaxDelay > 0 && sleep > p.MaxDelay {
-			sleep = p.MaxDelay
-		}
-		if p.Timeout > 0 {
-			remaining := p.Timeout - time.Since(start)
-			if remaining <= 0 {
-				return nil, nil, nil, lastErr
-			}
-			if sleep > remaining {
-				sleep = remaining
-			}
-		}
-		sleep = jitterDuration(sleep)
+		lastErr = e
+		return e
+	}, bo)
 
-		timer := time.NewTimer(sleep)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, nil, nil, lastErr
-		case <-timer.C:
-		}
-
-		// Reopen engine before retry to avoid a "stuck read-only" instance.
-		// If reopen fails, treat that as the new error and continue retrying if it is retryable.
-		if err := d.reopenEngine(ctx); err != nil {
-			lastErr = err
-			terr := translateIfNeeded(err)
-			if !(isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr)) {
-				return nil, nil, nil, err
-			}
-		}
-
-		// Exponential backoff.
-		if p.MaxDelay > 0 {
-			next := time.Duration(float64(delay) * 2)
-			if next > p.MaxDelay {
-				next = p.MaxDelay
-			}
-			delay = next
-		} else {
-			// Avoid overflow.
-			delay = time.Duration(math.Min(float64(delay)*2, float64(2*time.Second)))
-		}
+	if err == nil {
+		return sch, itr, lastCtx, nil
 	}
-}
 
-func jitterDuration(d time.Duration) time.Duration {
-	if d <= 0 {
-		return 0
+	// Preserve previous behavior: if context is canceled after one or more failures, return the last error.
+	if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && lastErr != nil {
+		return nil, nil, nil, lastErr
 	}
-	// 0.5x .. 1.5x jitter
-	f := 0.5 + rand.Float64()
-	return time.Duration(float64(d) * f)
+	if lastErr != nil {
+		return nil, nil, nil, lastErr
+	}
+	return nil, nil, nil, err
 }
 
 func (d *DoltConn) runExecWithRetry(
@@ -136,88 +125,58 @@ func (d *DoltConn) runExecWithRetry(
 		return op(se, gmsCtx)
 	}
 
-	start := time.Now()
-	attempt := 0
-	delay := p.InitialDelay
-	if delay <= 0 {
-		delay = 10 * time.Millisecond
-	}
+	bo := newRetryBackOff(ctx, p)
 
+	var attempt int
 	var lastErr error
-	for {
+	var res driver.Result
+
+	err := backoff.Retry(func() error {
 		attempt++
 
-		select {
-		case <-ctx.Done():
-			if lastErr != nil {
-				return nil, lastErr
+		if attempt > 1 {
+			if err := d.reopenEngine(ctx); err != nil {
+				terr := translateIfNeeded(err)
+				if !(isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr)) {
+					lastErr = err
+					return backoff.Permanent(err)
+				}
+				lastErr = err
+				return err
 			}
-			return nil, ctx.Err()
-		default:
 		}
 
 		se, gmsCtx := d.getEngineAndContext()
 		if gmsCtx != nil {
 			gmsCtx.SetQueryTime(time.Now())
 		}
-		res, err := op(se, gmsCtx)
-		if err == nil {
-			return res, nil
+
+		var e error
+		res, e = op(se, gmsCtx)
+		if e == nil {
+			lastErr = nil
+			return nil
 		}
 
-		terr := translateIfNeeded(err)
-		if !(isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr)) {
-			return nil, err
-		}
-		lastErr = err
-
-		if p.MaxAttempts > 0 && attempt >= p.MaxAttempts {
-			return nil, lastErr
-		}
-		if p.Timeout > 0 && time.Since(start) >= p.Timeout {
-			return nil, lastErr
+		terr := translateIfNeeded(e)
+		if !(isRetryableEmbeddedErr(e) || isRetryableEmbeddedErr(terr)) {
+			lastErr = e
+			return backoff.Permanent(e)
 		}
 
-		sleep := delay
-		if p.MaxDelay > 0 && sleep > p.MaxDelay {
-			sleep = p.MaxDelay
-		}
-		if p.Timeout > 0 {
-			remaining := p.Timeout - time.Since(start)
-			if remaining <= 0 {
-				return nil, lastErr
-			}
-			if sleep > remaining {
-				sleep = remaining
-			}
-		}
-		sleep = jitterDuration(sleep)
+		lastErr = e
+		return e
+	}, bo)
 
-		timer := time.NewTimer(sleep)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, lastErr
-		case <-timer.C:
-		}
-
-		if err := d.reopenEngine(ctx); err != nil {
-			lastErr = err
-			terr := translateIfNeeded(err)
-			if !(isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr)) {
-				return nil, err
-			}
-		}
-
-		if p.MaxDelay > 0 {
-			next := time.Duration(float64(delay) * 2)
-			if next > p.MaxDelay {
-				next = p.MaxDelay
-			}
-			delay = next
-		} else {
-			delay = time.Duration(math.Min(float64(delay)*2, float64(2*time.Second)))
-		}
+	if err == nil {
+		return res, nil
 	}
+	if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && lastErr != nil {
+		return nil, lastErr
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, err
 }
 

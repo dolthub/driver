@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"time"
+	"errors"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gmssql "github.com/dolthub/go-mysql-server/sql"
 )
@@ -62,50 +63,42 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		return nil, err
 	}
 
-	start := time.Now()
-	attempt := 0
-	delay := rp.InitialDelay
-	if delay <= 0 {
-		delay = 10 * time.Millisecond
-	}
-
 	var se *engine.SqlEngine
 	var gmsCtx *gmssql.Context
-	for {
-		attempt++
+	var lastErr error
 
+	if rp.Enabled {
+		bo := newRetryBackOff(ctx, rp)
+		err = backoff.Retry(func() error {
+			se, gmsCtx, _, err = openEmbeddedEngine(ctx, ds)
+			if err == nil {
+				lastErr = nil
+				return nil
+			}
+
+			terr := translateIfNeeded(err)
+			if !(isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr)) {
+				lastErr = err
+				return backoff.Permanent(err)
+			}
+
+			lastErr = err
+			return err
+		}, bo)
+		if err != nil {
+			if (errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)) && lastErr != nil {
+				return nil, lastErr
+			}
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, err
+		}
+	} else {
 		se, gmsCtx, _, err = openEmbeddedEngine(ctx, ds)
-		if err == nil {
-			break
-		}
-
-		terr := translateIfNeeded(err)
-		if !(rp.Enabled && (isRetryableEmbeddedErr(err) || isRetryableEmbeddedErr(terr))) {
+		if err != nil {
 			return nil, err
 		}
-
-		if rp.MaxAttempts > 0 && attempt >= rp.MaxAttempts {
-			return nil, err
-		}
-		if rp.Timeout > 0 && time.Since(start) >= rp.Timeout {
-			return nil, err
-		}
-
-		sleep := delay
-		if rp.MaxDelay > 0 && sleep > rp.MaxDelay {
-			sleep = rp.MaxDelay
-		}
-		if rp.Timeout > 0 {
-			remaining := rp.Timeout - time.Since(start)
-			if remaining <= 0 {
-				return nil, err
-			}
-			if sleep > remaining {
-				sleep = remaining
-			}
-		}
-		sleep = jitterDuration(sleep)
-		time.Sleep(sleep)
 	}
 
 	return &DoltConn{
