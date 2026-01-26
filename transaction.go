@@ -14,9 +14,7 @@ type doltTx struct {
 func (tx *doltTx) Commit() error {
 	se, gmsCtx := tx.conn.getEngineAndContext()
 	_, _, _, err := se.Query(gmsCtx, "COMMIT;")
-	if err == nil {
-		tx.conn.endTx()
-	}
+	tx.conn.endTx()
 	return translateError(err)
 }
 
@@ -24,8 +22,6 @@ func (tx *doltTx) Commit() error {
 func (tx *doltTx) Rollback() error {
 	se, gmsCtx := tx.conn.getEngineAndContext()
 	_, _, _, err := se.Query(gmsCtx, "ROLLBACK;")
-	if err == nil {
-		tx.conn.endTx()
-	}
+	tx.conn.endTx()
 	return translateError(err)
 }

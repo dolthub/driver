@@ -32,59 +32,104 @@ func ParseRetryPolicy(ds *DoltDataSource) (RetryPolicy, error) {
 		return p, nil
 	}
 
-	if ds.ParamIsTrue(RetryParam) {
-		p.Enabled = true
-	} else if vals, ok := ds.Params[RetryParam]; ok && len(vals) == 1 {
-		// Explicitly set to something other than true (e.g. "false"). Keep disabled,
-		// but validate we can interpret it.
-		v := vals[0]
-		if v != "false" && v != "0" && v != "no" && v != "off" && v != "true" && v != "1" && v != "yes" && v != "on" {
-			return RetryPolicy{}, fmt.Errorf("invalid %s=%q (expected true|false)", RetryParam, v)
-		}
+	enabled, err := parseRetryEnabled(ds)
+	if err != nil {
+		return RetryPolicy{}, err
+	}
+	p.Enabled = enabled
+
+	if err := applyDurationParam(ds, RetryTimeoutParam, &p.Timeout); err != nil {
+		return RetryPolicy{}, err
+	}
+	if err := applyDurationParam(ds, RetryInitialDelayParam, &p.InitialDelay); err != nil {
+		return RetryPolicy{}, err
+	}
+	if err := applyDurationParam(ds, RetryMaxDelayParam, &p.MaxDelay); err != nil {
+		return RetryPolicy{}, err
+	}
+	if err := applyIntParam(ds, RetryMaxAttemptsParam, &p.MaxAttempts); err != nil {
+		return RetryPolicy{}, err
 	}
 
-	if d, ok, err := ds.paramDuration(RetryTimeoutParam); err != nil {
+	if err := validateRetryPolicy(p); err != nil {
 		return RetryPolicy{}, err
-	} else if ok {
-		p.Timeout = d
-	}
-	if d, ok, err := ds.paramDuration(RetryInitialDelayParam); err != nil {
-		return RetryPolicy{}, err
-	} else if ok {
-		p.InitialDelay = d
-	}
-	if d, ok, err := ds.paramDuration(RetryMaxDelayParam); err != nil {
-		return RetryPolicy{}, err
-	} else if ok {
-		p.MaxDelay = d
-	}
-	if i, ok, err := ds.paramInt(RetryMaxAttemptsParam); err != nil {
-		return RetryPolicy{}, err
-	} else if ok {
-		p.MaxAttempts = i
-	}
-
-	// Validation
-	if p.Timeout < 0 {
-		return RetryPolicy{}, fmt.Errorf("%s must be >= 0", RetryTimeoutParam)
-	}
-	if p.MaxAttempts < 0 {
-		return RetryPolicy{}, fmt.Errorf("%s must be >= 0", RetryMaxAttemptsParam)
-	}
-	if p.InitialDelay < 0 {
-		return RetryPolicy{}, fmt.Errorf("%s must be >= 0", RetryInitialDelayParam)
-	}
-	if p.MaxDelay < 0 {
-		return RetryPolicy{}, fmt.Errorf("%s must be >= 0", RetryMaxDelayParam)
-	}
-	if p.InitialDelay > 0 && p.MaxDelay > 0 && p.InitialDelay > p.MaxDelay {
-		return RetryPolicy{}, fmt.Errorf("%s (%v) must be <= %s (%v)", RetryInitialDelayParam, p.InitialDelay, RetryMaxDelayParam, p.MaxDelay)
-	}
-	if p.Enabled && p.MaxAttempts == 0 && p.Timeout == 0 {
-		return RetryPolicy{}, fmt.Errorf("retry enabled but both %s and %s are 0", RetryMaxAttemptsParam, RetryTimeoutParam)
 	}
 
 	return p, nil
+}
+
+func parseRetryEnabled(ds *DoltDataSource) (bool, error) {
+	if ds == nil {
+		return false, nil
+	}
+
+	// Only "true" enables retry (matching ParamIsTrue behavior).
+	if ds.ParamIsTrue(RetryParam) {
+		return true, nil
+	}
+
+	// If explicitly set to something other than true (e.g. "false"), keep disabled,
+	// but validate we can interpret it.
+	vals, ok := ds.Params[RetryParam]
+	if !ok || len(vals) != 1 {
+		return false, nil
+	}
+
+	v := vals[0]
+	if v != "false" && v != "0" && v != "no" && v != "off" && v != "true" && v != "1" && v != "yes" && v != "on" {
+		return false, fmt.Errorf("invalid %s=%q (expected true|false)", RetryParam, v)
+	}
+	return false, nil
+}
+
+func applyDurationParam(ds *DoltDataSource, name string, dst *time.Duration) error {
+	if ds == nil || dst == nil {
+		return nil
+	}
+	d, ok, err := ds.paramDuration(name)
+	if err != nil {
+		return err
+	}
+	if ok {
+		*dst = d
+	}
+	return nil
+}
+
+func applyIntParam(ds *DoltDataSource, name string, dst *int) error {
+	if ds == nil || dst == nil {
+		return nil
+	}
+	i, ok, err := ds.paramInt(name)
+	if err != nil {
+		return err
+	}
+	if ok {
+		*dst = i
+	}
+	return nil
+}
+
+func validateRetryPolicy(p RetryPolicy) error {
+	if p.Timeout < 0 {
+		return fmt.Errorf("%s must be >= 0", RetryTimeoutParam)
+	}
+	if p.MaxAttempts < 0 {
+		return fmt.Errorf("%s must be >= 0", RetryMaxAttemptsParam)
+	}
+	if p.InitialDelay < 0 {
+		return fmt.Errorf("%s must be >= 0", RetryInitialDelayParam)
+	}
+	if p.MaxDelay < 0 {
+		return fmt.Errorf("%s must be >= 0", RetryMaxDelayParam)
+	}
+	if p.InitialDelay > 0 && p.MaxDelay > 0 && p.InitialDelay > p.MaxDelay {
+		return fmt.Errorf("%s (%v) must be <= %s (%v)", RetryInitialDelayParam, p.InitialDelay, RetryMaxDelayParam, p.MaxDelay)
+	}
+	if p.Enabled && p.MaxAttempts == 0 && p.Timeout == 0 {
+		return fmt.Errorf("retry enabled but both %s and %s are 0", RetryMaxAttemptsParam, RetryTimeoutParam)
+	}
+	return nil
 }
 
 func (ds *DoltDataSource) paramDuration(name string) (time.Duration, bool, error) {
