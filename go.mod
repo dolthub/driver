@@ -4,7 +4,7 @@ go 1.25.3
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/dolthub/dolt/go v0.40.5-0.20260126235345-38513982e2b1
+	github.com/dolthub/dolt/go v0.40.5-0.20260127183936-cd1cf0c457f8
 	github.com/dolthub/go-mysql-server v0.20.1-0.20260122230403-2a3380188573
 	github.com/dolthub/vitess v0.0.0-20260121194826-a5ce52b608e4
 	github.com/go-sql-driver/mysql v1.9.3
