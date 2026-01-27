@@ -25,9 +25,9 @@ const (
 	FailOnLockTimeoutParam = "failonlocktimeout" // fail-fast on journal lock timeout vs read-only fallback (default false)
 
 	// Retry policy parameters (embedded mode contention handling)
-	RetryParam            = "retry"            // true|false (default false)
-	RetryTimeoutParam     = "retrytimeout"     // e.g. "2s" (default 2s)
-	RetryMaxAttemptsParam = "retrymaxattempts" // e.g. "10" (default 10)
+	RetryParam             = "retry"             // true|false (default false)
+	RetryTimeoutParam      = "retrytimeout"      // e.g. "2s" (default 2s)
+	RetryMaxAttemptsParam  = "retrymaxattempts"  // e.g. "10" (default 10)
 	RetryInitialDelayParam = "retryinitialdelay" // e.g. "25ms" (default 25ms)
 	RetryMaxDelayParam     = "retrymaxdelay"     // e.g. "250ms" (default 250ms)
 )
@@ -65,12 +65,13 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 
 	var se *engine.SqlEngine
 	var gmsCtx *gmssql.Context
+	var cleanup func()
 	var lastErr error
 
 	if rp.Enabled {
 		bo := newRetryBackOff(ctx, rp)
 		err = backoff.Retry(func() error {
-			se, gmsCtx, _, err = openEmbeddedEngine(ctx, ds)
+			se, gmsCtx, _, cleanup, err = openEmbeddedEngine(ctx, ds)
 			if err == nil {
 				lastErr = nil
 				return nil
@@ -95,16 +96,17 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 			return nil, err
 		}
 	} else {
-		se, gmsCtx, _, err = openEmbeddedEngine(ctx, ds)
+		se, gmsCtx, _, cleanup, err = openEmbeddedEngine(ctx, ds)
 		if err != nil {
 			return nil, err
 		}
 	}
 
 	return &DoltConn{
-		DataSource:   ds,
-		se:           se,
-		gmsCtx:       gmsCtx,
-		retryPolicy:  rp,
+		DataSource:  ds,
+		se:          se,
+		gmsCtx:      gmsCtx,
+		retryPolicy: rp,
+		cleanup:     cleanup,
 	}, nil
 }

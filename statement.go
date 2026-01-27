@@ -67,7 +67,7 @@ func (d doltMultiStmt) ExecContext(ctx context.Context, args []driver.NamedValue
 func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 	var ret doltMultiRows
 	for _, stmt := range d.stmts {
-		ret.rowSets = append(ret.rowSets, func()*doltRows{
+		ret.rowSets = append(ret.rowSets, func() *doltRows {
 			rows, err := stmt.Query(args)
 			if err != nil {
 				return &doltRows{err: err}

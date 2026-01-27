@@ -313,13 +313,13 @@ func TestConcurrentWrite_WaitsAndEventuallySucceeds_WithDriverRetries(t *testing
 	tmpDir := t.TempDir()
 	// Enable retries in the helper process so it can wait for the writer to release.
 	query := url.Values{
-		"commitname":      []string{"Retry Tester"},
-		"commitemail":     []string{"retry@test.invalid"},
-		"database":        []string{"testdb"},
-		"multistatements": []string{"true"},
-		"retry":           []string{"true"},
-		"retrytimeout":    []string{"5s"},
-		"retrymaxattempts": []string{"100"},
+		"commitname":        []string{"Retry Tester"},
+		"commitemail":       []string{"retry@test.invalid"},
+		"database":          []string{"testdb"},
+		"multistatements":   []string{"true"},
+		"retry":             []string{"true"},
+		"retrytimeout":      []string{"5s"},
+		"retrymaxattempts":  []string{"100"},
 		"retryinitialdelay": []string{"25ms"},
 		"retrymaxdelay":     []string{"250ms"},
 		// Ensure we fail-fast on lock contention and always open a fresh local DB instance.
@@ -412,4 +412,3 @@ func ioReadAllNoErr(r io.Reader) ([]byte, error) {
 	}
 	return b, nil
 }
-

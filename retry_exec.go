@@ -179,4 +179,3 @@ func (d *DoltConn) runExecWithRetry(
 	}
 	return nil, err
 }
-

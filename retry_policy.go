@@ -161,4 +161,3 @@ func (ds *DoltDataSource) paramInt(name string) (int, bool, error) {
 	}
 	return i, true, nil
 }
-

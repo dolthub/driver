@@ -21,6 +21,7 @@ type DoltConn struct {
 
 	se         *engine.SqlEngine
 	gmsCtx     *gms.Context
+	cleanup    func()
 	DataSource *DoltDataSource
 
 	// retryPolicy is parsed from DSN parameters and used by retry logic.
@@ -77,17 +78,25 @@ func (d *DoltConn) reopenEngine(ctx context.Context) error {
 	}
 
 	// Close previous engine (best-effort).
+	if d.gmsCtx != nil && d.gmsCtx.Session != nil {
+		gms.SessionEnd(d.gmsCtx.Session)
+	}
 	if d.se != nil {
 		_ = d.se.Close()
 	}
+	if d.cleanup != nil {
+		d.cleanup()
+		d.cleanup = nil
+	}
 
-	se, gmsCtx, rp, err := openEmbeddedEngine(ctx, d.DataSource)
+	se, gmsCtx, rp, cleanup, err := openEmbeddedEngine(ctx, d.DataSource)
 	if err != nil {
 		return err
 	}
 	d.se = se
 	d.gmsCtx = gmsCtx
 	d.retryPolicy = rp
+	d.cleanup = cleanup
 	return nil
 }
 
@@ -148,19 +157,32 @@ func (d *DoltConn) prepareMultiStatement(query string) (*doltMultiStmt, error) {
 func (d *DoltConn) Close() error {
 	d.mu.Lock()
 	se := d.se
+	gmsCtx := d.gmsCtx
+	cleanup := d.cleanup
 	d.se = nil
 	d.gmsCtx = nil
+	d.cleanup = nil
 	d.mu.Unlock()
 
 	if se == nil {
 		return nil
 	}
 
+	if gmsCtx != nil && gmsCtx.Session != nil {
+		gms.SessionEnd(gmsCtx.Session)
+	}
+
 	err := se.Close()
 	if err != context.Canceled {
+		if cleanup != nil {
+			cleanup()
+		}
 		return err
 	}
 
+	if cleanup != nil {
+		cleanup()
+	}
 	return nil
 }
 
