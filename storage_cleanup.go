@@ -1,32 +1,12 @@
 package embedded
 
 import (
-	"context"
 	"path/filepath"
 	"sync"
 
 	"github.com/dolthub/dolt/go/libraries/doltcore/dbfactory"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
 )
-
-// closeMultiRepoEnvDatabases closes any loaded DoltDB instances referenced by |mrEnv|.
-// This is required in embedded mode when singleton caching is bypassed, since those
-// stores are not tracked by dbfactory's process-global singleton map.
-func closeMultiRepoEnvDatabases(mrEnv *env.MultiRepoEnv) {
-	if mrEnv == nil {
-		return
-	}
-	_ = mrEnv.Iter(func(_ string, dEnv *env.DoltEnv) (stop bool, err error) {
-		if dEnv == nil {
-			return false, nil
-		}
-		ddb := dEnv.DoltDB(context.Background())
-		if ddb != nil {
-			_ = ddb.Close()
-		}
-		return false, nil
-	})
-}
 
 // singletonCacheKeysForMultiRepoEnv returns the dbfactory singleton cache keys for each DB in the MultiRepoEnv.
 // Keys are based on the absolute on-disk path to the DB's ".dolt/noms" directory, converted to slash form.

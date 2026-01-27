@@ -167,11 +167,12 @@ func loadMultiEnvFromDir(
 
 	// Return a cleanup closure that properly releases storage.
 	//
-	// - In nocache mode, Dolt bypasses the singleton cache, so we must explicitly close each DoltDB to release locks.
+	// - In nocache mode, embedded Dolt (>= the lock-release fix) closes underlying DoltDBs on engine/provider close,
+	//   so we don't double-close here (which can produce noisy warnings).
 	// - Otherwise, we refcount singleton cache entries and close them only when the last user releases them.
 	if dbLoadParams != nil {
 		if _, ok := dbLoadParams[dbfactory.DisableSingletonCacheParam]; ok {
-			return mrEnv, func() { closeMultiRepoEnvDatabases(mrEnv) }, nil
+			return mrEnv, nil, nil
 		}
 	}
 	keys := singletonCacheKeysForMultiRepoEnv(mrEnv)
