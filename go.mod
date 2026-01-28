@@ -4,10 +4,10 @@ go 1.25.3
 
 require (
 	github.com/cenkalti/backoff/v4 v4.3.0
-	github.com/dolthub/dolt/go v0.40.5-0.20260127212853-80225a3ade73
+	github.com/dolthub/dolt/go v0.40.5-0.20260128011125-760516d15c9d
 	github.com/dolthub/fslock v0.0.3
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260122230403-2a3380188573
-	github.com/dolthub/vitess v0.0.0-20260121194826-a5ce52b608e4
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260127233446-630c5c00410d
+	github.com/dolthub/vitess v0.0.0-20260126213359-8ef4cbd3309c
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
 	gorm.io/driver/mysql v1.5.6
