@@ -1,8 +1,6 @@
 package embedded
 
 import (
-	"errors"
-
 	"github.com/cenkalti/backoff/v4"
 )
 
@@ -53,9 +51,3 @@ type Config struct {
 	// If empty, the connector will use a reasonable default.
 	Version string
 }
-
-var (
-	// ErrLegacyOpenRetryParamsUnsupported is returned when the DSN uses open_retry*
-	// parameters. Retries are configured via Config.BackOff instead.
-	ErrLegacyOpenRetryParamsUnsupported = errors.New("legacy DSN open_retry* params are unsupported; configure retries via Config.BackOff")
-)

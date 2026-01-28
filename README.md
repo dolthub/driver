@@ -89,8 +89,6 @@ clientfoundrows - If set to true, returns the number of matching rows instead of
 Retries during embedded engine open are configured via `Config.BackOff` passed to `embedded.NewConnector`.
 Retries are bounded by the context passed to `Connect` (typically via `db.PingContext(...)` or the first operation).
 
-Note: legacy DSN `open_retry*` params are no longer supported; `embedded.ParseDSN` will return an error if they are present.
-
 #### Example DSN
 
 `file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename`

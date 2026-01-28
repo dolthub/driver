@@ -1,7 +1,6 @@
 package embedded
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -43,25 +42,6 @@ func TestParseDSN_IsCaseInsensitiveForParamNames(t *testing.T) {
 	require.Equal(t, "test@example.com", cfg.CommitEmail)
 	require.True(t, cfg.MultiStatements)
 	require.True(t, cfg.ClientFoundRows)
-}
-
-func TestParseDSN_RejectsLegacyOpenRetryParams(t *testing.T) {
-	dir := t.TempDir()
-
-	for _, param := range []string{
-		"open_retry",
-		"open_retry_max_elapsed",
-		"open_retry_initial",
-		"open_retry_max_interval",
-		"open_retry_max_tries",
-	} {
-		t.Run(param, func(t *testing.T) {
-			dsn := fmt.Sprintf("file://%s?commitname=Test&commitemail=test@example.com&%s=true", dir, param)
-			_, err := ParseDSN(dsn)
-			require.Error(t, err)
-			require.True(t, errors.Is(err, ErrLegacyOpenRetryParamsUnsupported))
-		})
-	}
 }
 
 func TestParseDSN_RequiresCommitNameAndEmail(t *testing.T) {

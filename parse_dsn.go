@@ -10,26 +10,10 @@ import (
 //
 // It performs basic validation (required params, directory exists) and preserves
 // the raw parsed param map (lower-cased keys) in Config.Params.
-//
-// Note: legacy retry DSN params (open_retry*) are rejected. Configure retries via
-// Config.BackOff instead.
 func ParseDSN(dsn string) (Config, error) {
 	ds, err := ParseDataSource(dsn)
 	if err != nil {
 		return Config{}, err
-	}
-
-	// Reject legacy retry params. These are now configured via Config.BackOff.
-	for _, p := range []string{
-		"open_retry",
-		"open_retry_max_elapsed",
-		"open_retry_initial",
-		"open_retry_max_interval",
-		"open_retry_max_tries",
-	} {
-		if _, ok := ds.Params[p]; ok {
-			return Config{}, fmt.Errorf("%w (param %q in DSN)", ErrLegacyOpenRetryParamsUnsupported, p)
-		}
 	}
 
 	var fs filesys.Filesys = filesys.LocalFS
