@@ -56,7 +56,14 @@ commitemail - The email of the committer seen in the dolt commit log
 database - The initial database to connect to
 multistatements - If set to true, allows multiple statements in one query
 clientfoundrows - If set to true, returns the number of matching rows instead of the number of changed rows in UPDATE queries
+disable_singleton_cache - If set (value ignored), disables Dolt's in-process singleton DB cache for deterministic close/reopen behavior
+fail_on_journal_lock_timeout - If set (value ignored), fail fast when the DB's exclusive lock can't be acquired (instead of opening read-only)
 ```
+
+#### Retries on open (driver retries)
+
+If `fail_on_journal_lock_timeout` is set, the driver will retry opening the embedded SQL engine when it sees a lock/open failure (exponential backoff) until the calling context is canceled or its deadline is exceeded (e.g. `PingContext`, `QueryContext`).
+For best results with retries, also set `disable_singleton_cache` so each open attempt constructs a fresh underlying store and closing releases the filesystem lock.
 
 #### Example DSN
 
