@@ -58,12 +58,21 @@ multistatements - If set to true, allows multiple statements in one query
 clientfoundrows - If set to true, returns the number of matching rows instead of the number of changed rows in UPDATE queries
 disable_singleton_cache - If set (value ignored), disables Dolt's in-process singleton DB cache for deterministic close/reopen behavior
 fail_on_journal_lock_timeout - If set (value ignored), fail fast when the DB's exclusive lock can't be acquired (instead of opening read-only)
+open_retry - If set to true, retry engine open failures during OpenConnector with exponential backoff
+open_retry_max_elapsed - Maximum total time to spend retrying (e.g. 250ms, 2s)
+open_retry_initial - Initial backoff delay (e.g. 50ms)
+open_retry_max_interval - Maximum backoff delay (e.g. 2s)
+open_retry_max_tries - Maximum retry attempts (0 means unlimited, bounded by open_retry_max_elapsed)
 ```
 
 #### Retries on open (driver retries)
 
-If `fail_on_journal_lock_timeout` is set, the driver will retry opening the embedded SQL engine when it sees a lock/open failure (exponential backoff) until the calling context is canceled or its deadline is exceeded (e.g. `PingContext`, `QueryContext`).
-For best results with retries, also set `disable_singleton_cache` so each open attempt constructs a fresh underlying store and closing releases the filesystem lock.
+`OpenConnector` is not context-aware, so any retries happen during `OpenConnector` / `sql.OpenDB` and are bounded by the DSN `open_retry*` params (not by `PingContext` / `QueryContext`).
+
+For lock contention retries, set:
+- `fail_on_journal_lock_timeout` (so Dolt returns an error instead of opening read-only)
+- `open_retry=true` (so the driver retries engine open failures)
+- `disable_singleton_cache` (recommended so each attempt constructs a fresh store and closing releases the filesystem lock)
 
 #### Example DSN
 
