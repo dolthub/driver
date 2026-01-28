@@ -8,10 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 	"github.com/dolthub/dolt/go/store/nbs"
+	gms "github.com/dolthub/go-mysql-server/sql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -29,18 +31,24 @@ func TestOpenConnectorRetriesWhenEnabled(t *testing.T) {
 		return &engine.SqlEngine{}, nil
 	}
 
-	dsn := fmt.Sprintf(
-		"file://%s?commitname=Test&commitemail=test@example.com&open_retry=true&open_retry_max_tries=10&open_retry_max_elapsed=2s",
-		dir,
-	)
+	prevNewCtx := newLocalContextForConnector
+	t.Cleanup(func() { newLocalContextForConnector = prevNewCtx })
+	newLocalContextForConnector = func(se *engine.SqlEngine, ctx context.Context) (*gms.Context, error) {
+		return &gms.Context{}, nil
+	}
 
-	c, err := (&doltDriver{}).OpenConnector(dsn)
+	dsn := fmt.Sprintf("file://%s?commitname=Test&commitemail=test@example.com", dir)
+	cfg, err := ParseDSN(dsn)
+	require.NoError(t, err)
+	cfg.BackOff = backoff.WithMaxRetries(backoff.NewConstantBackOff(0), 10)
+
+	c, err := NewConnector(cfg)
 	require.NoError(t, err)
 	require.NotNil(t, c)
+	_, err = c.Connect(context.Background())
+	require.NoError(t, err)
 	require.GreaterOrEqual(t, atomic.LoadInt32(&calls), int32(4))
-	dc, ok := c.(*doltConnector)
-	require.True(t, ok)
-	require.NoError(t, dc.Close())
+	require.NoError(t, c.Close())
 }
 
 func TestOpenConnectorDoesNotRetryWhenDisabled(t *testing.T) {
@@ -54,8 +62,18 @@ func TestOpenConnectorDoesNotRetryWhenDisabled(t *testing.T) {
 		return nil, nbs.ErrDatabaseLocked
 	}
 
+	prevNewCtx := newLocalContextForConnector
+	t.Cleanup(func() { newLocalContextForConnector = prevNewCtx })
+	newLocalContextForConnector = func(se *engine.SqlEngine, ctx context.Context) (*gms.Context, error) {
+		return &gms.Context{}, nil
+	}
+
 	dsn := fmt.Sprintf("file://%s?commitname=Test&commitemail=test@example.com", dir)
-	_, err := (&doltDriver{}).OpenConnector(dsn)
+	cfg, err := ParseDSN(dsn)
+	require.NoError(t, err)
+	c, err := NewConnector(cfg)
+	require.NoError(t, err)
+	_, err = c.Connect(context.Background())
 	require.Error(t, err)
 	require.True(t, errors.Is(err, nbs.ErrDatabaseLocked))
 	require.Equal(t, int32(1), atomic.LoadInt32(&calls))
@@ -70,12 +88,24 @@ func TestOpenConnectorRetryRespectsMaxElapsed(t *testing.T) {
 		return nil, nbs.ErrDatabaseLocked
 	}
 
+	prevNewCtx := newLocalContextForConnector
+	t.Cleanup(func() { newLocalContextForConnector = prevNewCtx })
+	newLocalContextForConnector = func(se *engine.SqlEngine, ctx context.Context) (*gms.Context, error) {
+		return &gms.Context{}, nil
+	}
+
+	dsn := fmt.Sprintf("file://%s?commitname=Test&commitemail=test@example.com", dir)
+	cfg, err := ParseDSN(dsn)
+	require.NoError(t, err)
+	cfg.BackOff = backoff.NewConstantBackOff(10 * time.Millisecond)
+	c, err := NewConnector(cfg)
+	require.NoError(t, err)
+
+	openCtx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel()
+
 	start := time.Now()
-	dsn := fmt.Sprintf(
-		"file://%s?commitname=Test&commitemail=test@example.com&open_retry=true&open_retry_max_elapsed=150ms",
-		dir,
-	)
-	_, err := (&doltDriver{}).OpenConnector(dsn)
+	_, err = c.Connect(openCtx)
 	elapsed := time.Since(start)
 
 	require.Error(t, err)

@@ -19,6 +19,7 @@ type DoltConn struct {
 	se         *engine.SqlEngine
 	gmsCtx     *gms.Context
 	DataSource *DoltDataSource
+	cfg        *Config
 }
 
 // Prepare packages up |query| as a *doltStmt so it can be executed. If multistatements mode
@@ -29,7 +30,14 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 	// the same ctx instance and update the time.
 	d.gmsCtx.SetQueryTime(time.Now())
 
-	if d.DataSource.ParamIsTrue(MultiStatementsParam) {
+	multi := false
+	if d.cfg != nil {
+		multi = d.cfg.MultiStatements
+	} else if d.DataSource != nil {
+		multi = d.DataSource.ParamIsTrue(MultiStatementsParam)
+	}
+
+	if multi {
 		return d.prepareMultiStatement(query)
 	} else {
 		return d.prepareSingleStatement(query)

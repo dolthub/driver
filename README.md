@@ -37,10 +37,36 @@ First we'll import the dolt driver so that it will be registered
 _ "github.com/dolthub/driver"
 ```
 
-Then we will open a connection to the database:
+Then we will open a connection to the database (recommended):
 
 ```go
-db, err := sql.Open("dolt", "file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename")
+import (
+    "context"
+    "database/sql"
+    "time"
+
+    "github.com/cenkalti/backoff/v4"
+    embedded "github.com/dolthub/driver"
+)
+
+cfg, err := embedded.ParseDSN("file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename")
+if err != nil {
+    // handle error
+}
+
+// Optional: configure retries during engine open (e.g. lock contention).
+// Retries are bounded by context (e.g. PingContext).
+cfg.BackOff = backoff.NewExponentialBackOff()
+
+connector, err := embedded.NewConnector(cfg)
+if err != nil {
+    // handle error
+}
+
+db := sql.OpenDB(connector)
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+_ = db.PingContext(ctx)
 ```
 
 Now you can use your `db` as you would normally, however you have access to all of dolt's special features as well. 
@@ -56,18 +82,14 @@ commitemail - The email of the committer seen in the dolt commit log
 database - The initial database to connect to
 multistatements - If set to true, allows multiple statements in one query
 clientfoundrows - If set to true, returns the number of matching rows instead of the number of changed rows in UPDATE queries
-open_retry - If set to true, retry engine open failures during OpenConnector with exponential backoff
-open_retry_max_elapsed - Maximum total time to spend retrying (e.g. 250ms, 2s)
-open_retry_initial - Initial backoff delay (e.g. 50ms)
-open_retry_max_interval - Maximum backoff delay (e.g. 2s)
-open_retry_max_tries - Maximum retry attempts (0 means unlimited, bounded by open_retry_max_elapsed)
 ```
 
 #### Retries on open (driver retries)
 
-`OpenConnector` is not context-aware, so any retries happen during `OpenConnector` / `sql.OpenDB` and are bounded by the DSN `open_retry*` params (not by `PingContext` / `QueryContext`).
+Retries during embedded engine open are configured via `Config.BackOff` passed to `embedded.NewConnector`.
+Retries are bounded by the context passed to `Connect` (typically via `db.PingContext(...)` or the first operation).
 
-For lock contention retries, set `open_retry=true`. The driver will enable the necessary low-level Dolt open behaviors (fail-fast on lock timeout and disabling the singleton cache) to support deterministic retries.
+Note: legacy DSN `open_retry*` params are no longer supported; `embedded.ParseDSN` will return an error if they are present.
 
 #### Example DSN
 
