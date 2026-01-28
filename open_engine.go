@@ -17,32 +17,32 @@ import (
 
 const doltEngineVersion = "0.40.17"
 
-func openEmbeddedEngine(ctx context.Context, ds *DoltDataSource) (*engine.SqlEngine, *gmssql.Context, RetryPolicy, func(), error) {
+func openEmbeddedEngine(ctx context.Context, ds *DoltDataSource) (*engine.SqlEngine, *gmssql.Context, RetryPolicy, error) {
 	var fs filesys.Filesys = filesys.LocalFS
 
 	if ds == nil {
-		return nil, nil, RetryPolicy{}, nil, fmt.Errorf("nil datasource")
+		return nil, nil, RetryPolicy{}, fmt.Errorf("nil datasource")
 	}
 
 	exists, isDir := fs.Exists(ds.Directory)
 	if !exists {
-		return nil, nil, RetryPolicy{}, nil, fmt.Errorf("'%s' does not exist", ds.Directory)
+		return nil, nil, RetryPolicy{}, fmt.Errorf("'%s' does not exist", ds.Directory)
 	} else if !isDir {
-		return nil, nil, RetryPolicy{}, nil, fmt.Errorf("%s: is a file.  Need to specify a directory", ds.Directory)
+		return nil, nil, RetryPolicy{}, fmt.Errorf("%s: is a file.  Need to specify a directory", ds.Directory)
 	}
 
 	fs, err := fs.WithWorkingDir(ds.Directory)
 	if err != nil {
-		return nil, nil, RetryPolicy{}, nil, err
+		return nil, nil, RetryPolicy{}, err
 	}
 
 	name := ds.Params[CommitNameParam]
 	if name == nil {
-		return nil, nil, RetryPolicy{}, nil, fmt.Errorf("datasource must include %q", CommitNameParam)
+		return nil, nil, RetryPolicy{}, fmt.Errorf("datasource must include %q", CommitNameParam)
 	}
 	email := ds.Params[CommitEmailParam]
 	if email == nil {
-		return nil, nil, RetryPolicy{}, nil, fmt.Errorf("datasource must include %q", CommitEmailParam)
+		return nil, nil, RetryPolicy{}, fmt.Errorf("datasource must include %q", CommitEmailParam)
 	}
 
 	cfg := config.NewMapConfig(map[string]string{
@@ -62,19 +62,16 @@ func openEmbeddedEngine(ctx context.Context, ds *DoltDataSource) (*engine.SqlEng
 		dbLoadParams = nil
 	}
 
-	mrEnv, cleanup, err := loadMultiEnvFromDir(ctx, cfg, fs, doltEngineVersion, dbLoadParams)
+	mrEnv, err := loadMultiEnvFromDir(ctx, cfg, fs, doltEngineVersion, dbLoadParams)
 	if err != nil {
-		return nil, nil, RetryPolicy{}, nil, err
+		return nil, nil, RetryPolicy{}, err
 	}
 
 	// Ensure all discovered DBs are actually loadable before we construct the SQL engine.
 	// Without this, a lock-timeout failure can result in a nil *doltdb.DoltDB that later panics
 	// during engine construction (DbEaFactory deref).
 	if err := ensureMultiRepoEnvLoaded(ctx, mrEnv); err != nil {
-		if cleanup != nil {
-			cleanup()
-		}
-		return nil, nil, RetryPolicy{}, nil, err
+		return nil, nil, RetryPolicy{}, err
 	}
 
 	seCfg := &engine.SqlEngineConfig{
@@ -91,19 +88,13 @@ func openEmbeddedEngine(ctx context.Context, ds *DoltDataSource) (*engine.SqlEng
 
 	se, err := engine.NewSqlEngine(ctx, mrEnv, seCfg)
 	if err != nil {
-		if cleanup != nil {
-			cleanup()
-		}
-		return nil, nil, RetryPolicy{}, nil, err
+		return nil, nil, RetryPolicy{}, err
 	}
 
 	gmsCtx, err := se.NewLocalContext(ctx)
 	if err != nil {
 		_ = se.Close()
-		if cleanup != nil {
-			cleanup()
-		}
-		return nil, nil, RetryPolicy{}, nil, err
+		return nil, nil, RetryPolicy{}, err
 	}
 	if database, ok := ds.Params[DatabaseParam]; ok && len(database) == 1 {
 		gmsCtx.SetCurrentDatabase(database[0])
@@ -120,13 +111,10 @@ func openEmbeddedEngine(ctx context.Context, ds *DoltDataSource) (*engine.SqlEng
 	rp, err := ParseRetryPolicy(ds)
 	if err != nil {
 		_ = se.Close()
-		if cleanup != nil {
-			cleanup()
-		}
-		return nil, nil, RetryPolicy{}, nil, err
+		return nil, nil, RetryPolicy{}, err
 	}
 
-	return se, gmsCtx, rp, cleanup, nil
+	return se, gmsCtx, rp, nil
 }
 
 func ensureMultiRepoEnvLoaded(ctx context.Context, mrEnv *env.MultiRepoEnv) error {
@@ -153,7 +141,7 @@ func loadMultiEnvFromDir(
 	fs filesys.Filesys,
 	version string,
 	dbLoadParams map[string]interface{},
-) (*env.MultiRepoEnv, func(), error) {
+) (*env.MultiRepoEnv, error) {
 	// Create a root env with DBLoadParams so MultiEnvForDirectory will apply them before it eagerly loads DBs.
 	rootEnv := env.LoadWithoutDB(ctx, env.GetCurrentUserHomeDir, fs, doltdb.LocalDirDoltDB, version)
 	if rootEnv != nil && dbLoadParams != nil {
@@ -162,20 +150,9 @@ func loadMultiEnvFromDir(
 
 	mrEnv, err := env.MultiEnvForDirectory(ctx, cfg, fs, version, rootEnv)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// Return a cleanup closure that properly releases storage.
-	//
-	// - In nocache mode, embedded Dolt (>= the lock-release fix) closes underlying DoltDBs on engine/provider close,
-	//   so we don't double-close here (which can produce noisy warnings).
-	// - Otherwise, we refcount singleton cache entries and close them only when the last user releases them.
-	if dbLoadParams != nil {
-		if _, ok := dbLoadParams[dbfactory.DisableSingletonCacheParam]; ok {
-			return mrEnv, nil, nil
-		}
-	}
-	keys := singletonCacheKeysForMultiRepoEnv(mrEnv)
-	globalSingletonRefCounts.acquire(keys)
-	return mrEnv, func() { globalSingletonRefCounts.release(keys) }, nil
+	// Engine/provider close is expected to release all underlying storage.
+	return mrEnv, nil
 }

@@ -46,11 +46,10 @@ func (d *DoltConn) runQueryWithRetry(
 	ctx context.Context,
 	op func(se *engine.SqlEngine, gmsCtx *gms.Context) (gms.Schema, gms.RowIter, error),
 ) (gms.Schema, gms.RowIter, *gms.Context, error) {
-	p := d.getRetryPolicy()
-	if !p.Enabled || d.inTransaction() {
-		se, gmsCtx := d.getEngineAndContext()
-		sch, itr, err := op(se, gmsCtx)
-		return sch, itr, gmsCtx, err
+	p := d.retryPolicy
+	if !p.Enabled || d.txDepth > 0 {
+		sch, itr, err := op(d.se, d.gmsCtx)
+		return sch, itr, d.gmsCtx, err
 	}
 
 	bo := newRetryBackOff(ctx, p)
@@ -78,14 +77,13 @@ func (d *DoltConn) runQueryWithRetry(
 			}
 		}
 
-		se, gmsCtx := d.getEngineAndContext()
-		lastCtx = gmsCtx
-		if gmsCtx != nil {
-			gmsCtx.SetQueryTime(time.Now())
+		lastCtx = d.gmsCtx
+		if d.gmsCtx != nil {
+			d.gmsCtx.SetQueryTime(time.Now())
 		}
 
 		var e error
-		sch, itr, e = op(se, gmsCtx)
+		sch, itr, e = op(d.se, d.gmsCtx)
 		if e == nil {
 			lastErr = nil
 			return nil
@@ -119,10 +117,9 @@ func (d *DoltConn) runExecWithRetry(
 	ctx context.Context,
 	op func(se *engine.SqlEngine, gmsCtx *gms.Context) (driver.Result, error),
 ) (driver.Result, error) {
-	p := d.getRetryPolicy()
-	if !p.Enabled || d.inTransaction() {
-		se, gmsCtx := d.getEngineAndContext()
-		return op(se, gmsCtx)
+	p := d.retryPolicy
+	if !p.Enabled || d.txDepth > 0 {
+		return op(d.se, d.gmsCtx)
 	}
 
 	bo := newRetryBackOff(ctx, p)
@@ -146,13 +143,12 @@ func (d *DoltConn) runExecWithRetry(
 			}
 		}
 
-		se, gmsCtx := d.getEngineAndContext()
-		if gmsCtx != nil {
-			gmsCtx.SetQueryTime(time.Now())
+		if d.gmsCtx != nil {
+			d.gmsCtx.SetQueryTime(time.Now())
 		}
 
 		var e error
-		res, e = op(se, gmsCtx)
+		res, e = op(d.se, d.gmsCtx)
 		if e == nil {
 			lastErr = nil
 			return nil

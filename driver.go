@@ -65,13 +65,12 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 
 	var se *engine.SqlEngine
 	var gmsCtx *gmssql.Context
-	var cleanup func()
 	var lastErr error
 
 	if rp.Enabled {
 		bo := newRetryBackOff(ctx, rp)
 		err = backoff.Retry(func() error {
-			se, gmsCtx, _, cleanup, err = openEmbeddedEngine(ctx, ds)
+			se, gmsCtx, _, err = openEmbeddedEngine(ctx, ds)
 			if err == nil {
 				lastErr = nil
 				return nil
@@ -96,7 +95,7 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 			return nil, err
 		}
 	} else {
-		se, gmsCtx, _, cleanup, err = openEmbeddedEngine(ctx, ds)
+		se, gmsCtx, _, err = openEmbeddedEngine(ctx, ds)
 		if err != nil {
 			return nil, err
 		}
@@ -107,6 +106,5 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		se:          se,
 		gmsCtx:      gmsCtx,
 		retryPolicy: rp,
-		cleanup:     cleanup,
 	}, nil
 }

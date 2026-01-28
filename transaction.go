@@ -12,16 +12,14 @@ type doltTx struct {
 
 // Commit finishes the transaction.
 func (tx *doltTx) Commit() error {
-	se, gmsCtx := tx.conn.getEngineAndContext()
-	_, _, _, err := se.Query(gmsCtx, "COMMIT;")
+	_, _, _, err := tx.conn.se.Query(tx.conn.gmsCtx, "COMMIT;")
 	tx.conn.endTx()
 	return translateError(err)
 }
 
 // Rollback cancels the transaction.
 func (tx *doltTx) Rollback() error {
-	se, gmsCtx := tx.conn.getEngineAndContext()
-	_, _, _, err := se.Query(gmsCtx, "ROLLBACK;")
+	_, _, _, err := tx.conn.se.Query(tx.conn.gmsCtx, "ROLLBACK;")
 	tx.conn.endTx()
 	return translateError(err)
 }
