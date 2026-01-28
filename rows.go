@@ -16,7 +16,7 @@ import (
 // current result set is in currentRowSet, with the index of its
 // producer in currentIdx.
 type doltMultiRows struct {
-	rowSets       []func()*doltRows
+	rowSets       []func() *doltRows
 	currentIdx    int
 	currentRowSet *doltRows
 }
@@ -58,7 +58,7 @@ func (d *doltMultiRows) Next(dest []driver.Value) error {
 // run. It is OK if this returns |true| but |NextResultSet| ends up
 // returning |io.EOF| after we run all the remaining queries.
 func (d *doltMultiRows) HasNextResultSet() bool {
-	return (d.currentIdx+1) < len(d.rowSets)
+	return (d.currentIdx + 1) < len(d.rowSets)
 }
 
 // Called anytime we are going on to the next result set, including at

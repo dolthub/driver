@@ -82,4 +82,3 @@ func TestOpenConnectorRetryRespectsMaxElapsed(t *testing.T) {
 	// It may return the last underlying lock error, but it should not run unbounded.
 	require.Less(t, elapsed, 2*time.Second)
 }
-
