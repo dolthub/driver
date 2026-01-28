@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
@@ -26,6 +27,7 @@ const (
 )
 
 var _ driver.Driver = (*doltDriver)(nil)
+var _ driver.DriverContext = (*doltDriver)(nil)
 
 func init() {
 	sql.Register(DoltDriverName, &doltDriver{})
@@ -42,11 +44,15 @@ type doltDriver struct {
 //
 // The path needs to point to a directory whose subdirectories are dolt databases.  If a "Create Database" command is
 // run a new subdirectory will be created in this path.
-func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
+func (d *doltDriver) Open(dsn string) (driver.Conn, error) {
+	return nil, errors.New("dolt SQL driver does not support Open()")
+}
+
+func (d *doltDriver) OpenConnector(dsn string) (driver.Connector, error) {
 	ctx := context.Background()
 	var fs filesys.Filesys = filesys.LocalFS
 
-	ds, err := ParseDataSource(dataSource)
+	ds, err := ParseDataSource(dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -65,12 +71,12 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 
 	name := ds.Params[CommitNameParam]
 	if name == nil {
-		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitNameParam)
+		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dsn, CommitNameParam)
 	}
 
 	email := ds.Params[CommitEmailParam]
 	if email == nil {
-		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitEmailParam)
+		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dsn, CommitEmailParam)
 	}
 
 	cfg := config.NewMapConfig(map[string]string{
@@ -94,14 +100,36 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 		return nil, err
 	}
 
-	gmsCtx, err := se.NewLocalContext(ctx)
+	var database string
+	if databases, ok := ds.Params[DatabaseParam]; ok && len(databases) == 1 {
+		database = databases[0]
+	}
+
+	return &doltConnector{
+		DataSource: ds,
+		se: se,
+		database: database,
+		driver: d,
+	}, nil
+}
+
+type doltConnector struct {
+	DataSource *DoltDataSource
+	gmsCtx     *gmssql.Context
+	se         *engine.SqlEngine
+	database   string
+	driver     *doltDriver
+}
+
+func (dc *doltConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	gmsCtx, err := dc.se.NewLocalContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if database, ok := ds.Params[DatabaseParam]; ok && len(database) == 1 {
-		gmsCtx.SetCurrentDatabase(database[0])
+	if dc.database != "" {
+		gmsCtx.SetCurrentDatabase(dc.database)
 	}
-	if ds.ParamIsTrue(ClientFoundRowsParam) {
+	if dc.DataSource.ParamIsTrue(ClientFoundRowsParam) {
 		client := gmsCtx.Client()
 		gmsCtx.SetClient(gmssql.Client{
 			User:         client.User,
@@ -109,12 +137,19 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 			Capabilities: client.Capabilities | mysql.CapabilityClientFoundRows,
 		})
 	}
-
 	return &DoltConn{
-		DataSource: ds,
-		se:         se,
+		DataSource: dc.DataSource,
+		se:         dc.se,
 		gmsCtx:     gmsCtx,
 	}, nil
+}
+
+func (dc *doltConnector) Driver() driver.Driver {
+	return dc.driver
+}
+
+func (dc *doltConnector) Close() error {
+	return dc.se.Close()
 }
 
 // LoadMultiEnvFromDir looks at each subfolder of the given path as a Dolt repository and attempts to return a MultiRepoEnv
