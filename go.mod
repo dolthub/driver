@@ -3,9 +3,9 @@ module github.com/dolthub/driver
 go 1.25.3
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20260114190420-4dd08b249b63
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260109215716-eb63e475be4b
-	github.com/dolthub/vitess v0.0.0-20260108222406-f8a2587c4954
+	github.com/dolthub/dolt/go v0.40.5-0.20260128011125-760516d15c9d
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260127233446-630c5c00410d
+	github.com/dolthub/vitess v0.0.0-20260126213359-8ef4cbd3309c
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
 	gorm.io/driver/mysql v1.5.6

@@ -51,7 +51,7 @@ func (d doltMultiStmt) Exec(args []driver.Value) (result driver.Result, err erro
 func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 	var ret doltMultiRows
 	for _, stmt := range d.stmts {
-		ret.rowSets = append(ret.rowSets, func()*doltRows{
+		ret.rowSets = append(ret.rowSets, func() *doltRows {
 			rows, err := stmt.Query(args)
 			if err != nil {
 				return &doltRows{err: err}

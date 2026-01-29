@@ -37,10 +37,36 @@ First we'll import the dolt driver so that it will be registered
 _ "github.com/dolthub/driver"
 ```
 
-Then we will open a connection to the database:
+Then we will open a connection to the database (recommended):
 
 ```go
-db, err := sql.Open("dolt", "file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename")
+import (
+    "context"
+    "database/sql"
+    "time"
+
+    "github.com/cenkalti/backoff/v4"
+    embedded "github.com/dolthub/driver"
+)
+
+cfg, err := embedded.ParseDSN("file:///path/to/dbs?commitname=Your%20Name&commitemail=your@email.com&database=databasename")
+if err != nil {
+    // handle error
+}
+
+// Optional: configure retries during engine open (e.g. lock contention).
+// Retries are bounded by context (e.g. PingContext).
+cfg.BackOff = backoff.NewExponentialBackOff()
+
+connector, err := embedded.NewConnector(cfg)
+if err != nil {
+    // handle error
+}
+
+db := sql.OpenDB(connector)
+ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+defer cancel()
+_ = db.PingContext(ctx)
 ```
 
 Now you can use your `db` as you would normally, however you have access to all of dolt's special features as well. 
@@ -57,6 +83,11 @@ database - The initial database to connect to
 multistatements - If set to true, allows multiple statements in one query
 clientfoundrows - If set to true, returns the number of matching rows instead of the number of changed rows in UPDATE queries
 ```
+
+#### Retries on open (driver retries)
+
+Retries during embedded engine open are configured via `Config.BackOff` passed to `embedded.NewConnector`.
+Retries are bounded by the context passed to `Connect` (typically via `db.PingContext(...)` or the first operation).
 
 #### Example DSN
 

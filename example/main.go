@@ -12,7 +12,8 @@ import (
 	"strings"
 	"time"
 
-	_ "github.com/dolthub/driver"
+	"github.com/cenkalti/backoff/v4"
+	embedded "github.com/dolthub/driver"
 )
 
 func errExit(wrapFormat string, err error) {
@@ -28,7 +29,7 @@ func errExit(wrapFormat string, err error) {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Println("usage: example file:///path/to/doltdb?commitname=<user_name>&commitemail=<email>&database=<database>&multistatements=<true|false>")
+		fmt.Println("usage: example file:///path/to/dbs?commitname=<user_name>&commitemail=<email>&database=<database>&multistatements=<true|false>")
 		return
 	}
 
@@ -36,7 +37,18 @@ func main() {
 
 	dataSource := os.Args[1]
 	fmt.Println("Connecting to", dataSource)
-	db, err := sql.Open("dolt", dataSource)
+	cfg, err := embedded.ParseDSN(dataSource)
+	errExit("failed to parse DSN: %w", err)
+
+	// Optional: enable bounded retries while opening the embedded engine.
+	cfg.BackOff = backoff.NewExponentialBackOff()
+
+	connector, err := embedded.NewConnector(cfg)
+	errExit("failed to create connector: %w", err)
+	defer connector.Close()
+
+	db := sql.OpenDB(connector)
+	err = db.PingContext(ctx)
 	errExit("failed to open database using the dolt driver: %w", err)
 
 	err = printQuery(ctx, db, "CREATE DATABASE IF NOT EXISTS testdb; USE testdb;")
