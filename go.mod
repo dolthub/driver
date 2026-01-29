@@ -1,11 +1,12 @@
 module github.com/dolthub/driver
 
-go 1.25.3
+go 1.25.6
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20260128011125-760516d15c9d
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260127233446-630c5c00410d
-	github.com/dolthub/vitess v0.0.0-20260126213359-8ef4cbd3309c
+	github.com/cenkalti/backoff/v4 v4.2.1
+	github.com/dolthub/dolt/go v0.40.5-0.20260129204643-460dc5864c05
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260128201837-5b7ec92cc6e9
+	github.com/dolthub/vitess v0.0.0-20260128180459-bd171d35a7e2
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
 	gorm.io/driver/mysql v1.5.6
@@ -51,7 +52,6 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.33.16 // indirect
 	github.com/aws/smithy-go v1.22.2 // indirect
 	github.com/bcicen/jstream v1.0.1 // indirect
-	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20250501225837-2ac532fd4443 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
