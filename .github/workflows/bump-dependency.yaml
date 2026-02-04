@@ -113,7 +113,7 @@ jobs:
           BUMP_LABEL: ${{ needs.sanitize-payload.outputs.safe_label }}
           BRANCH_PREFIX: bump-${{ needs.sanitize-payload.outputs.safe_dep }}-
         with:
-          github-token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const prefix = process.env.BRANCH_PREFIX;
@@ -152,9 +152,17 @@ jobs:
       pr_number: ${{ steps.create-pr.outputs.pr_number }}
       pr_url: ${{ steps.create-pr.outputs.pr_url }}
     steps:
+      - name: Require REPO_ACCESS_TOKEN
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${{ secrets.REPO_ACCESS_TOKEN }}" ]; then
+            echo "Missing required secret: REPO_ACCESS_TOKEN" >&2
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.REPO_ACCESS_TOKEN }}
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
@@ -204,7 +212,7 @@ jobs:
           SHORT: ${{ needs.sanitize-payload.outputs.safe_short }}
           ASSIGNEE: ${{ needs.sanitize-payload.outputs.safe_assignee }}
         with:
-          github-token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const branch = process.env.BRANCH;
@@ -303,7 +311,7 @@ jobs:
           NEW_PR_NUMBER: ${{ needs.open-bump-pr.outputs.pr_number }}
           NEW_PR_URL: ${{ needs.open-bump-pr.outputs.pr_url }}
         with:
-          github-token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN }}
           script: |
             const { owner, repo } = context.repo;
             const pull = JSON.parse(process.env.PULL);
