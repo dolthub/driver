@@ -6,15 +6,22 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
+	"time"
 
+	"github.com/dolthub/dolt/go/cmd/dolt/commands"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
+	"github.com/dolthub/dolt/go/cmd/dolt/doltversion"
 	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
+	"github.com/dolthub/dolt/go/libraries/events"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
+	eventsapi "github.com/dolthub/eventsapi_schema/dolt/services/eventsapi/v1alpha1"
 	gmssql "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/vitess/go/mysql"
+	"github.com/google/uuid"
 )
 
 const (
@@ -168,6 +175,16 @@ func (c *doltConnector) sqlEngine() (*engine.SqlEngine, error) {
 	}
 
 	c.se, c.seErr = newSqlEngine(initCtx, mrEnv, c.seCfg)
+
+	var dEnv *env.DoltEnv
+	mrEnv.Iter(func(_ string, e *env.DoltEnv) (stop bool, err error) {
+		dEnv = e
+		return true, nil
+	})
+
+	// emit usage event asynchronously
+	go emitUsageEvent(context.Background(), dEnv)
+
 	return c.se, c.seErr
 }
 
@@ -278,10 +295,10 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 // with initialized environments for each of those subfolder data repositories. subfolders whose name starts with '.' are
 // skipped.
 func LoadMultiEnvFromDir(
-	ctx context.Context,
-	cfg config.ReadWriteConfig,
-	fs filesys.Filesys,
-	path, version string,
+		ctx context.Context,
+		cfg config.ReadWriteConfig,
+		fs filesys.Filesys,
+		path, version string,
 ) (*env.MultiRepoEnv, error) {
 
 	multiDbDirFs, err := fs.WithWorkingDir(path)
@@ -290,4 +307,64 @@ func LoadMultiEnvFromDir(
 	}
 
 	return env.MultiEnvForDirectory(ctx, cfg, multiDbDirFs, version, nil)
+}
+
+var metricsDisabled = false
+var metricsSent bool
+var metricsSentSync sync.Once
+
+func init() {
+	if _, disabled := os.LookupEnv("DOLT_METRICS_DISABLED"); disabled {
+		metricsDisabled = true
+	}
+}
+
+// emitUsageEvent emits a usage event to the event server, then one every 24 hours the process is alive.
+// This happens once per process.
+func emitUsageEvent(ctx context.Context, dEnv *env.DoltEnv) {
+	if metricsDisabled {
+		return
+	}
+
+	metricsSentSync.Do(func() {
+		metricsSent = true
+	})
+
+	if metricsSent {
+		return
+	}
+
+	emitter, closeFunc, err := commands.GRPCEmitterForConfig(dEnv, events.WithApplication(eventsapi.AppID_APP_DOLT_EMBEDDED))
+	if err != nil {
+		return
+	}
+	defer closeFunc()
+
+	evt := events.NewEvent(eventsapi.ClientEventType_SQL_SERVER)
+	evtCollector := events.NewCollector(doltversion.Version, emitter)
+	evtCollector.CloseEventAndAdd(evt)
+	clientEvents := evtCollector.Close()
+	_ = emitter.LogEvents(ctx, doltversion.Version, clientEvents)
+
+	// Emit a heart-beat event once every 24 hours
+	duration, _ := time.ParseDuration("24h")
+	ticker := time.NewTicker(duration)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			t := events.NowTimestamp()
+			_ = emitter.LogEvents(ctx, doltversion.Version, []*eventsapi.ClientEvent{
+				{
+					Id:        uuid.New().String(),
+					StartTime: t,
+					EndTime:   t,
+					Type:      eventsapi.ClientEventType_SQL_SERVER_HEARTBEAT,
+				},
+			})
+		}
+	}
 }
