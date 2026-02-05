@@ -51,6 +51,8 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	if err != nil {
 		return nil, err
 	}
+
+	go emitUsageEvent(context.Background(), mrEnv)
 	return engine.NewSqlEngine(ctx, mrEnv, seCfg)
 }
 

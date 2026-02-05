@@ -4,8 +4,8 @@ go 1.25.6
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260204201225-219b61e00019
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260204193159-86990113e4cc
+	github.com/dolthub/dolt/go v0.40.5-0.20260205205653-c36134df0949
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260205181409-94138bb5f115
 	github.com/dolthub/vitess v0.0.0-20260202234501-b14ed9b1632b
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
@@ -57,7 +57,7 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12 // indirect
-	github.com/dolthub/eventsapi_schema v0.0.0-20250915094920-eadfd39051ca // indirect
+	github.com/dolthub/eventsapi_schema v0.0.0-20260205202218-90231e52d6c8 // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/fslock v0.0.3 // indirect
 	github.com/dolthub/go-icu-regex v0.0.0-20250916051405-78a38d478790 // indirect
