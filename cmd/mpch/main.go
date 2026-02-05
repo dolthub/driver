@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 )
 
@@ -54,6 +56,8 @@ type planFields struct {
 
 	SetupDelay    string `json:"setup_delay"`
 	TeardownDelay string `json:"teardown_delay"`
+
+	Policy gatingPolicy `json:"policy"`
 }
 
 func main() {
@@ -103,10 +107,31 @@ func main() {
 
 		SetupDelay:    cfg.SetupDelay.String(),
 		TeardownDelay: cfg.TeardownDelay.String(),
+
+		Policy: defaultPolicy(),
 	})
 
-	root := context.Background()
-	if code := runPhases(root, cfg, emit); code != 0 {
+	// Signal handling:
+	// - first SIGINT/SIGTERM: cancel run context (attempt graceful teardown)
+	// - second SIGINT/SIGTERM: force immediate exit
+	runCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 2)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	go func() {
+		sig := <-sigCh
+		emit("control", "interrupt", map[string]any{"signal": sig.String()})
+		cancel()
+
+		sig = <-sigCh
+		emit("control", "interrupt_force_exit", map[string]any{"signal": sig.String()})
+		os.Exit(130)
+	}()
+
+	if code := runPhases(runCtx, cfg, emit); code != 0 {
 		os.Exit(code)
 	}
 }
@@ -117,25 +142,49 @@ type phaseEndFields struct {
 	Error     any   `json:"error,omitempty"`
 }
 
-func runPhases(ctx context.Context, cfg harnessConfig, emit func(phase, name string, fields any)) int {
-	// Policy (for now): fail-fast on setup failure (do not enter run/teardown).
-	// If run fails, attempt teardown best-effort, then exit non-zero.
+type gatingPolicy struct {
+	SetupFailure    string `json:"setup_failure"`
+	RunFailure      string `json:"run_failure"`
+	TeardownFailure string `json:"teardown_failure"`
+}
 
-	if err := runPhase(ctx, "setup", cfg.SetupTimeout, emit, func(pctx context.Context) error {
-		return sleepWithContext(pctx, cfg.SetupDelay)
-	}); err != nil {
-		return 1
+func defaultPolicy() gatingPolicy {
+	return gatingPolicy{
+		SetupFailure:    "attempt_teardown_then_fail",
+		RunFailure:      "attempt_teardown_then_fail",
+		TeardownFailure: "fail",
 	}
+}
 
-	runErr := runPhase(ctx, "run", cfg.RunTimeout, emit, func(pctx context.Context) error {
-		return sleepWithContext(pctx, cfg.Duration)
+func runPhases(ctx context.Context, cfg harnessConfig, emit func(phase, name string, fields any)) int {
+	// Policy:
+	// - setup failure: do not enter run; attempt teardown best-effort; then fail
+	// - run failure: attempt teardown best-effort; then fail
+	// - teardown failure: fail
+
+	setupErr := runPhase(ctx, "setup", cfg.SetupTimeout, emit, func(pctx context.Context) error {
+		return sleepWithContext(pctx, cfg.SetupDelay)
 	})
 
-	_ = runPhase(ctx, "teardown", cfg.TeardownTimeout, emit, func(pctx context.Context) error {
+	var runErr error
+	if setupErr == nil {
+		runErr = runPhase(ctx, "run", cfg.RunTimeout, emit, func(pctx context.Context) error {
+			return sleepWithContext(pctx, cfg.Duration)
+		})
+	}
+
+	// Teardown must still be able to run even if ctx is canceled (e.g. SIGINT).
+	teardownErr := runPhase(context.Background(), "teardown", cfg.TeardownTimeout, emit, func(pctx context.Context) error {
 		return sleepWithContext(pctx, cfg.TeardownDelay)
 	})
 
+	if setupErr != nil {
+		return 1
+	}
 	if runErr != nil {
+		return 1
+	}
+	if teardownErr != nil {
 		return 1
 	}
 	return 0
