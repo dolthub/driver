@@ -1,12 +1,14 @@
 module github.com/dolthub/driver
 
-go 1.25.3
+go 1.25.6
 
 require (
-	github.com/dolthub/dolt/go v0.40.5-0.20260114190420-4dd08b249b63
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260109215716-eb63e475be4b
-	github.com/dolthub/vitess v0.0.0-20260108222406-f8a2587c4954
+	github.com/dolthub/dolt/go v0.40.5-0.20260205205653-c36134df0949
+	github.com/dolthub/eventsapi_schema v0.0.0-20260205202218-90231e52d6c8
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260205181409-94138bb5f115
+	github.com/dolthub/vitess v0.0.0-20260202234501-b14ed9b1632b
 	github.com/go-sql-driver/mysql v1.9.3
+	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
 	gorm.io/driver/mysql v1.5.6
 	gorm.io/gorm v1.25.10
@@ -26,7 +28,9 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.50.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.50.0 // indirect
 	github.com/HdrHistogram/hdrhistogram-go v1.1.2 // indirect
+	github.com/abiosoft/readline v0.0.0-20180607040430-155bce2042db // indirect
 	github.com/aliyun/aliyun-oss-go-sdk v3.0.2+incompatible // indirect
+	github.com/andreyvit/diff v0.0.0-20170406064948-c7f18ee00883 // indirect
 	github.com/apache/arrow/go/arrow v0.0.0-20211112161151-bc219186db40 // indirect
 	github.com/apache/thrift v0.19.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.36.3 // indirect
@@ -57,11 +61,11 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12 // indirect
-	github.com/dolthub/eventsapi_schema v0.0.0-20250915094920-eadfd39051ca // indirect
 	github.com/dolthub/flatbuffers/v23 v23.3.3-dh.2 // indirect
 	github.com/dolthub/fslock v0.0.3 // indirect
 	github.com/dolthub/go-icu-regex v0.0.0-20250916051405-78a38d478790 // indirect
 	github.com/dolthub/gozstd v0.0.0-20240423170813-23a2903bca63 // indirect
+	github.com/dolthub/ishell v0.0.0-20240701202509-2b217167d718 // indirect
 	github.com/dolthub/jsonpath v0.0.2-0.20240227200619-19675ab05c71 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
@@ -70,6 +74,7 @@ require (
 	github.com/esote/minmaxheap v1.0.0 // indirect
 	github.com/fatih/color v1.16.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/flynn-archive/go-shlex v0.0.0-20150515145356-3f9db97f8568 // indirect
 	github.com/go-jose/go-jose/v4 v4.0.5 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
@@ -78,8 +83,10 @@ require (
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.1.2 // indirect
+	github.com/google/go-github/v57 v57.0.0 // indirect
+	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
-	github.com/google/uuid v1.6.0 // indirect
+	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.2 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
@@ -99,6 +106,7 @@ require (
 	github.com/oracle/oci-go-sdk/v65 v65.55.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.21 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/pkg/profile v1.5.0 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
@@ -106,8 +114,14 @@ require (
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/silvasur/buzhash v0.0.0-20160816060738-9bdec3dec7c6 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
+	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/sony/gobreaker v0.5.0 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.5.0 // indirect
+	github.com/tealeg/xlsx v1.0.5 // indirect
+	github.com/tidwall/gjson v1.14.4 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.1 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/vbauerster/mpb/v8 v8.7.2 // indirect
 	github.com/xitongsys/parquet-go v1.6.2 // indirect
 	github.com/xitongsys/parquet-go-source v0.0.0-20240122235623-d6294584ab18 // indirect
