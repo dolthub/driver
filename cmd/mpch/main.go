@@ -11,6 +11,8 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -61,6 +63,23 @@ type planFields struct {
 	TeardownDelay string `json:"teardown_delay"`
 
 	Policy gatingPolicy `json:"policy"`
+}
+
+type phaseMeta struct {
+	Start time.Time `json:"start"`
+	End   time.Time `json:"end"`
+	OK    bool      `json:"ok"`
+	Error string    `json:"error,omitempty"`
+}
+
+type runMeta struct {
+	RunID     string     `json:"run_id"`
+	CreatedAt time.Time  `json:"created_at"`
+	Plan      planFields `json:"plan"`
+
+	Phases map[string]phaseMeta `json:"phases"`
+
+	ExitCode int `json:"exit_code"`
 }
 
 func main() {
@@ -133,10 +152,14 @@ func main() {
 
 	sigCh := make(chan os.Signal, 2)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigCh)
-
 	done := make(chan struct{})
-	defer close(done)
+	var stopSignalsOnce sync.Once
+	stopSignals := func() {
+		stopSignalsOnce.Do(func() {
+			signal.Stop(sigCh)
+			close(done)
+		})
+	}
 
 	go func() {
 		var sig os.Signal
@@ -157,7 +180,47 @@ func main() {
 		os.Exit(130)
 	}()
 
-	if code := runPhases(runCtx, cfg, emit); code != 0 {
+	code, phases := runPhases(runCtx, cfg, emit)
+	stopSignals()
+
+	meta := runMeta{
+		RunID:     runID,
+		CreatedAt: time.Now().UTC(),
+		Plan: planFields{
+			DSN:          cfg.DSN,
+			Readers:      cfg.Readers,
+			Writers:      cfg.Writers,
+			Duration:     cfg.Duration.String(),
+			TickInterval: cfg.TickInterval.String(),
+			Seed:         cfg.Seed,
+			RunDir:       cfg.RunDir,
+			DryRun:       cfg.DryRun,
+
+			SetupTimeout:    cfg.SetupTimeout.String(),
+			RunTimeout:      cfg.RunTimeout.String(),
+			TeardownTimeout: cfg.TeardownTimeout.String(),
+
+			SetupDelay:    cfg.SetupDelay.String(),
+			TeardownDelay: cfg.TeardownDelay.String(),
+
+			Policy: defaultPolicy(),
+		},
+		Phases:   phases,
+		ExitCode: code,
+	}
+
+	if !cfg.DryRun {
+		if err := writeMeta(cfg.RunDir, runID, meta); err != nil {
+			emit("artifacts", "meta_write_error", map[string]any{"error": err.Error()})
+			code = 1
+		} else {
+			emit("artifacts", "meta_written", map[string]any{"path": filepath.Join(cfg.RunDir, runID, "meta.json")})
+		}
+	} else {
+		emit("artifacts", "skipped", map[string]any{"reason": "dry_run"})
+	}
+
+	if code != 0 {
 		os.Exit(code)
 	}
 }
@@ -182,38 +245,44 @@ func defaultPolicy() gatingPolicy {
 	}
 }
 
-func runPhases(ctx context.Context, cfg harnessConfig, emit func(phase, name string, fields any)) int {
+func runPhases(ctx context.Context, cfg harnessConfig, emit func(phase, name string, fields any)) (int, map[string]phaseMeta) {
 	// Policy:
 	// - setup failure: do not enter run; attempt teardown best-effort; then fail
 	// - run failure: attempt teardown best-effort; then fail
 	// - teardown failure: fail
 
-	setupErr := runPhase(ctx, "setup", cfg.SetupTimeout, emit, func(pctx context.Context) error {
+	phases := map[string]phaseMeta{}
+
+	setupErr, setupMeta := runPhase(ctx, "setup", cfg.SetupTimeout, emit, func(pctx context.Context) error {
 		return sleepWithContext(pctx, cfg.SetupDelay)
 	})
+	phases["setup"] = setupMeta
 
 	var runErr error
+	var runMeta phaseMeta
 	if setupErr == nil {
-		runErr = runPhase(ctx, "run", cfg.RunTimeout, emit, func(pctx context.Context) error {
+		runErr, runMeta = runPhase(ctx, "run", cfg.RunTimeout, emit, func(pctx context.Context) error {
 			return runWithTicks(pctx, cfg.Duration, cfg.TickInterval, emit)
 		})
+		phases["run"] = runMeta
 	}
 
 	// Teardown must still be able to run even if ctx is canceled (e.g. SIGINT).
-	teardownErr := runPhase(context.Background(), "teardown", cfg.TeardownTimeout, emit, func(pctx context.Context) error {
+	teardownErr, teardownMeta := runPhase(context.Background(), "teardown", cfg.TeardownTimeout, emit, func(pctx context.Context) error {
 		return sleepWithContext(pctx, cfg.TeardownDelay)
 	})
+	phases["teardown"] = teardownMeta
 
 	if setupErr != nil {
-		return 1
+		return 1, phases
 	}
 	if runErr != nil {
-		return 1
+		return 1, phases
 	}
 	if teardownErr != nil {
-		return 1
+		return 1, phases
 	}
-	return 0
+	return 0, phases
 }
 
 func runPhase(
@@ -222,24 +291,34 @@ func runPhase(
 	timeout time.Duration,
 	emit func(phase, name string, fields any),
 	fn func(context.Context) error,
-) error {
+) (error, phaseMeta) {
 	emit(phase, "phase_start", nil)
 
-	start := time.Now()
+	start := time.Now().UTC()
 	pctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	err := fn(pctx)
+	end := time.Now().UTC()
 
 	endFields := phaseEndFields{
 		OK:        err == nil,
-		ElapsedMs: time.Since(start).Milliseconds(),
+		ElapsedMs: end.Sub(start).Milliseconds(),
 	}
 	if err != nil {
 		endFields.Error = err.Error()
 	}
 	emit(phase, "phase_end", endFields)
-	return err
+
+	meta := phaseMeta{
+		Start: start,
+		End:   end,
+		OK:    err == nil,
+	}
+	if err != nil {
+		meta.Error = err.Error()
+	}
+	return err, meta
 }
 
 func sleepWithContext(ctx context.Context, d time.Duration) error {
@@ -391,5 +470,18 @@ func newRunID() (string, error) {
 func isBrokenPipe(err error) bool {
 	// We care about the common case: write to a closed pipe.
 	return errors.Is(err, syscall.EPIPE)
+}
+
+func writeMeta(runDir, runID string, meta runMeta) error {
+	dir := filepath.Join(runDir, runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	return os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
 }
 

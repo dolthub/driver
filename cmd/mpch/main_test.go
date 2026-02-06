@@ -24,7 +24,7 @@ func TestRunPhases_SetupFailureSkipsRunButAttemptsTeardown(t *testing.T) {
 		events = append(events, phase+":"+name)
 	}
 
-	code := runPhases(context.Background(), cfg, emit)
+	code, _ := runPhases(context.Background(), cfg, emit)
 	if code == 0 {
 		t.Fatalf("expected non-zero exit code")
 	}
@@ -65,7 +65,7 @@ func TestRunPhases_RunFailureStillAttemptsTeardown(t *testing.T) {
 		events = append(events, phase+":"+name)
 	}
 
-	code := runPhases(context.Background(), cfg, emit)
+	code, _ := runPhases(context.Background(), cfg, emit)
 	if code == 0 {
 		t.Fatalf("expected non-zero exit code")
 	}
@@ -101,7 +101,7 @@ func TestRunPhases_TeardownFailureFailsOverall(t *testing.T) {
 		TeardownDelay:   50 * time.Millisecond,
 	}
 
-	code := runPhases(context.Background(), cfg, func(string, string, any) {})
+	code, _ := runPhases(context.Background(), cfg, func(string, string, any) {})
 	if code == 0 {
 		t.Fatalf("expected non-zero exit code")
 	}
@@ -126,7 +126,7 @@ func TestRunPhases_CanceledContextStillAttemptsTeardown(t *testing.T) {
 		events = append(events, phase+":"+name)
 	}
 
-	_ = runPhases(ctx, cfg, emit)
+	_, _ = runPhases(ctx, cfg, emit)
 
 	var sawTeardown bool
 	for _, e := range events {
