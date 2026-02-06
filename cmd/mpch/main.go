@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cenkalti/backoff/v4"
 	embedded "github.com/dolthub/driver"
 )
 
@@ -45,6 +46,7 @@ type harnessConfig struct {
 	WorkerOpInterval time.Duration
 	WorkerOpenRetry bool
 	WorkerSQLSession string
+	WorkerOpTimeout time.Duration
 
 	SetupTimeout    time.Duration
 	RunTimeout      time.Duration
@@ -86,6 +88,7 @@ type planFields struct {
 	WorkerOpInterval string `json:"worker_op_interval"`
 	WorkerOpenRetry bool `json:"worker_open_retry"`
 	WorkerSQLSession string `json:"worker_sql_session"`
+	WorkerOpTimeout string `json:"worker_op_timeout"`
 
 	SetupTimeout    string `json:"setup_timeout"`
 	RunTimeout      string `json:"run_timeout"`
@@ -206,6 +209,7 @@ func main() {
 		WorkerOpInterval: cfg.WorkerOpInterval.String(),
 		WorkerOpenRetry: cfg.WorkerOpenRetry,
 		WorkerSQLSession: cfg.WorkerSQLSession,
+		WorkerOpTimeout: cfg.WorkerOpTimeout.String(),
 
 		SetupTimeout:    cfg.SetupTimeout.String(),
 		RunTimeout:      cfg.RunTimeout.String(),
@@ -292,6 +296,7 @@ func main() {
 			WorkerOpInterval: cfg.WorkerOpInterval.String(),
 			WorkerOpenRetry: cfg.WorkerOpenRetry,
 			WorkerSQLSession: cfg.WorkerSQLSession,
+			WorkerOpTimeout: cfg.WorkerOpTimeout.String(),
 
 			SetupTimeout:    cfg.SetupTimeout.String(),
 			RunTimeout:      cfg.RunTimeout.String(),
@@ -555,6 +560,7 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs.DurationVar(&cfg.WorkerOpInterval, "worker-op-interval", 100*time.Millisecond, "Worker operation interval (sql mode)")
 	fs.BoolVar(&cfg.WorkerOpenRetry, "worker-open-retry", true, "Enable retry on embedded engine open in workers (sql mode)")
 	fs.StringVar(&cfg.WorkerSQLSession, "worker-sql-session", "per_op", "Worker SQL session scope: per_op|per_run (sql mode)")
+	fs.DurationVar(&cfg.WorkerOpTimeout, "worker-op-timeout", 500*time.Millisecond, "Worker timeout per operation (sql mode)")
 
 	fs.DurationVar(&cfg.SetupTimeout, "setup-timeout", 10*time.Second, "Setup phase timeout")
 	fs.DurationVar(&cfg.RunTimeout, "run-timeout", 0, "Run phase timeout (0 = duration + 5s)")
@@ -611,6 +617,9 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 		}
 		if cfg.WorkerOpInterval <= 0 {
 			return harnessConfig{}, false, fmt.Errorf("--worker-op-interval must be > 0")
+		}
+		if cfg.WorkerOpTimeout <= 0 {
+			return harnessConfig{}, false, fmt.Errorf("--worker-op-timeout must be > 0")
 		}
 		if cfg.WorkerSQLSession != "per_op" && cfg.WorkerSQLSession != "per_run" {
 			return harnessConfig{}, false, fmt.Errorf("--worker-sql-session must be per_op or per_run")
@@ -740,6 +749,9 @@ func ensureSQLSchema(ctx context.Context, cfg harnessConfig) error {
 	}
 	// Avoid selecting DB before it exists.
 	ecfg.Database = ""
+	// Ensure schema setup doesn't hold onto singleton-cached engine instances.
+	// (A non-nil BackOff triggers DisableSingletonCache in the connector open path.)
+	ecfg.BackOff = backoff.WithMaxRetries(backoff.NewConstantBackOff(0), 0)
 
 	connector, err := embedded.NewConnector(ecfg)
 	if err != nil {
@@ -788,6 +800,7 @@ type workerLaunchArgs struct {
 	OpInterval time.Duration
 	OpenRetry  bool
 	SQLSession string
+	OpTimeout  time.Duration
 
 	Heartbeat       time.Duration
 	IgnoreInterrupt bool
@@ -841,6 +854,7 @@ func runWorkersAndTicks(
 			OpInterval:      cfg.WorkerOpInterval,
 			OpenRetry:       cfg.WorkerOpenRetry,
 			SQLSession:      cfg.WorkerSQLSession,
+			OpTimeout:       cfg.WorkerOpTimeout,
 			Heartbeat:       cfg.WorkerHeartbeatInterval,
 			IgnoreInterrupt: cfg.WorkerIgnoreInterrupt,
 		}, emit)
@@ -923,6 +937,7 @@ func startWorker(
 		"--op-interval", args.OpInterval.String(),
 		"--open-retry=" + fmt.Sprintf("%t", args.OpenRetry),
 		"--sql-session", args.SQLSession,
+		"--op-timeout", args.OpTimeout.String(),
 	}
 	if args.IgnoreInterrupt {
 		argv = append(argv, "--ignore-interrupt=true")

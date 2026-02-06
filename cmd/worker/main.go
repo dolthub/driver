@@ -34,6 +34,7 @@ type config struct {
 
 	OpenRetry bool
 	SQLSession string
+	OpTimeout time.Duration
 }
 
 type event struct {
@@ -198,6 +199,9 @@ func runSQL(ctx context.Context, cfg config, emit func(name string, fields any))
 	if cfg.OpInterval <= 0 {
 		return fmt.Errorf("--op-interval must be > 0")
 	}
+	if cfg.OpTimeout <= 0 {
+		return fmt.Errorf("--op-timeout must be > 0")
+	}
 
 	if cfg.SQLSession != "per_op" && cfg.SQLSession != "per_run" {
 		return fmt.Errorf("--sql-session must be per_op or per_run")
@@ -243,17 +247,21 @@ func runSQL(ctx context.Context, cfg config, emit func(name string, fields any))
 		case <-op.C:
 			var err error
 			if cfg.SQLSession == "per_op" {
-				d, closer, oerr := openDB(ctx, cfg)
+				opCtx, cancel := context.WithTimeout(ctx, cfg.OpTimeout)
+				d, closer, oerr := openDB(opCtx, cfg)
 				if oerr != nil {
 					err = oerr
 				} else {
-					err = doOneOp(ctx, d, cfg)
+					err = doOneOp(opCtx, d, cfg)
 				}
 				if closer != nil {
 					closer()
 				}
+				cancel()
 			} else {
-				err = doOneOp(ctx, db, cfg)
+				opCtx, cancel := context.WithTimeout(ctx, cfg.OpTimeout)
+				err = doOneOp(opCtx, db, cfg)
+				cancel()
 			}
 			if err != nil {
 				s.opsErr++
@@ -364,6 +372,7 @@ func parseArgs(args []string) (cfg config, showHelp bool, _ error) {
 	fs.StringVar(&cfg.DBName, "db", "mpch", "Database name to use/create (sql mode)")
 	fs.StringVar(&cfg.TableName, "table", "harness_events", "Table name to use/create (sql mode)")
 	fs.DurationVar(&cfg.OpInterval, "op-interval", 100*time.Millisecond, "Operation interval (sql mode)")
+	fs.DurationVar(&cfg.OpTimeout, "op-timeout", 500*time.Millisecond, "Timeout per operation (sql mode)")
 	fs.BoolVar(&cfg.OpenRetry, "open-retry", false, "Enable retry on embedded engine open (sql mode)")
 	fs.StringVar(&cfg.SQLSession, "sql-session", "per_op", "SQL session scope: per_op (open/close per op) or per_run (single open)")
 
@@ -405,6 +414,9 @@ func parseArgs(args []string) (cfg config, showHelp bool, _ error) {
 	}
 	if cfg.OpInterval <= 0 {
 		return config{}, false, fmt.Errorf("--op-interval must be > 0")
+	}
+	if cfg.OpTimeout <= 0 {
+		return config{}, false, fmt.Errorf("--op-timeout must be > 0")
 	}
 	if cfg.SQLSession != "per_op" && cfg.SQLSession != "per_run" {
 		return config{}, false, fmt.Errorf("--sql-session must be per_op or per_run")
