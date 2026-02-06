@@ -4,12 +4,11 @@ go 1.25.6
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260206204512-28eaba9d358f
+	github.com/dolthub/dolt/go v0.40.5-0.20260206215103-1016b2ef8fda
 	github.com/dolthub/eventsapi_schema v0.0.0-20260205214132-a7a3c84c84a1
 	github.com/dolthub/go-mysql-server v0.20.1-0.20260205195710-d9c710c32e81
 	github.com/dolthub/vitess v0.0.0-20260202234501-b14ed9b1632b
 	github.com/go-sql-driver/mysql v1.9.3
-	github.com/google/uuid v1.6.0
 	github.com/stretchr/testify v1.11.1
 	gorm.io/driver/mysql v1.5.6
 	gorm.io/gorm v1.25.10
@@ -87,6 +86,7 @@ require (
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
+	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.2 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
