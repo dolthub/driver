@@ -20,7 +20,6 @@ import (
 	"net/url"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -545,17 +544,13 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 	require.IsType(t, time.Time{}, vals[6])
 }
 
-var metricsDisabledMutex = &sync.Mutex{}
-
 // initializeTestDatabaseConnection create a test database called testdb and initialize a database/sql connection
 // using the Dolt driver. The connection, |conn|, is returned, and |cleanupFunc| is a function that the test function
 // should defer in order to properly dispose of test resources.
 func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn *sql.Conn, cleanUpFunc func()) {
-	metricsDisabledMutex.Lock()
 	// disable metrics during test runs
 	// no need to set it back to false since no test should have it set to true
-	metricsDisabled = true
-	metricsDisabledMutex.Unlock()
+	metricsDisabled.Store(true)
 
 	dir, err := os.MkdirTemp("", "dolthub-driver-tests-db*")
 	require.NoError(t, err)

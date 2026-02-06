@@ -281,14 +281,16 @@ func (c *Connector) openEngineWithRetry(ctx context.Context) (*engine.SqlEngine,
 	return se, nil
 }
 
-var metricsDisabled = false
+// Two tracking vars to ensure we only emit metrics once per process, and that we don't emit if the env var is set.
+// These are atomic bools to avoid races in test, or when there are multiple connectors in the same process.
+var metricsDisabled = &atomic.Bool{}
 var metricsSent = &atomic.Bool{}
 
 const metricsDisabledEnvKey = "DOLT_METRICS_DISABLED"
 
 func init() {
 	if _, disabled := os.LookupEnv(metricsDisabledEnvKey); disabled {
-		metricsDisabled = true
+		metricsDisabled.Store(true)
 	}
 }
 
@@ -299,7 +301,7 @@ func emitUsageEvent(ctx context.Context, mrEnv *env.MultiRepoEnv) {
 		recover()
 	}()
 
-	if metricsDisabled || !metricsSent.CompareAndSwap(false, true) {
+	if metricsDisabled.Load() || !metricsSent.CompareAndSwap(false, true) {
 		return
 	}
 
