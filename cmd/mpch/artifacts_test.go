@@ -83,4 +83,3 @@ func TestWriteManifest_WritesFile(t *testing.T) {
 		t.Fatalf("expected manifest.json to exist: %v", err)
 	}
 }
-

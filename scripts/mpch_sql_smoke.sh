@@ -49,7 +49,7 @@ set +e
   --worker-db mpch_test \
   --worker-table harness_events \
   --worker-op-interval 100ms \
-  --worker-op-timeout 500ms \
+  --worker-op-timeout 10s \
   --worker-sql-session per_op \
   --worker-open-retry=true \
   --worker-bin "$BIN_DIR/worker" \

@@ -210,4 +210,3 @@ func TestWorkerManifest_DeterministicIDs(t *testing.T) {
 		t.Fatalf("expected ids to vary with seed; m1=%v m3=%v", m1.Workers, m3.Workers)
 	}
 }
-
