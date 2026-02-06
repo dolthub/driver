@@ -20,19 +20,32 @@ func TestWriteMeta_CollisionFailsUnlessOverwrite(t *testing.T) {
 		ExitCode:  0,
 	}
 
-	// First write should succeed.
-	if err := writeMeta(runDir, runID, false, meta); err != nil {
-		t.Fatalf("first writeMeta failed: %v", err)
+	// Prepare dir first, then write meta.
+	runPath, err := prepareRunDir(runDir, runID, false)
+	if err != nil {
+		t.Fatalf("prepareRunDir failed: %v", err)
+	}
+	if err := writeMeta(runPath, meta); err != nil {
+		t.Fatalf("writeMeta failed: %v", err)
 	}
 
-	// Second write without overwrite should fail.
-	if err := writeMeta(runDir, runID, false, meta); err == nil {
+	// Collision should fail without overwrite.
+	if _, err := prepareRunDir(runDir, runID, false); err == nil {
 		t.Fatalf("expected collision error, got nil")
 	}
 
-	// With overwrite it should succeed and meta.json should exist.
-	if err := writeMeta(runDir, runID, true, meta); err != nil {
-		t.Fatalf("overwrite writeMeta failed: %v", err)
+	// With overwrite it should succeed.
+	if _, err := prepareRunDir(runDir, runID, true); err != nil {
+		t.Fatalf("prepareRunDir overwrite failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(runDir, runID)); err != nil {
+		t.Fatalf("expected run dir to exist: %v", err)
+	}
+
+	// Recompute runPath after overwrite and ensure meta write succeeds.
+	runPath = filepath.Join(runDir, runID)
+	if err := writeMeta(runPath, meta); err != nil {
+		t.Fatalf("writeMeta after overwrite failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(runDir, runID, "meta.json")); err != nil {
 		t.Fatalf("expected meta.json to exist: %v", err)
@@ -56,13 +69,13 @@ func TestWriteManifest_WritesFile(t *testing.T) {
 	runDir := t.TempDir()
 	runID := "testrun_2"
 
-	// Create run dir as writeManifest expects it to exist after meta write.
-	if err := os.MkdirAll(filepath.Join(runDir, runID), 0o755); err != nil {
-		t.Fatalf("mkdir failed: %v", err)
+	runPath, err := prepareRunDir(runDir, runID, false)
+	if err != nil {
+		t.Fatalf("prepareRunDir failed: %v", err)
 	}
 
 	manifest := newWorkerManifest(123, 2, 1)
-	if err := writeManifest(runDir, runID, manifest); err != nil {
+	if err := writeManifest(runPath, manifest); err != nil {
 		t.Fatalf("writeManifest failed: %v", err)
 	}
 

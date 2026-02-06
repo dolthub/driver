@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"os/exec"
 	"sync"
 	"syscall"
 	"time"
@@ -29,6 +31,8 @@ type harnessConfig struct {
 	DryRun   bool
 	RunID     string
 	Overwrite bool
+	WorkerBin string
+	WorkerHeartbeatInterval time.Duration
 
 	SetupTimeout    time.Duration
 	RunTimeout      time.Duration
@@ -59,6 +63,8 @@ type planFields struct {
 	DryRun   bool   `json:"dry_run"`
 	RunIDOverride string `json:"run_id_override,omitempty"`
 	Overwrite     bool   `json:"overwrite"`
+	WorkerBin string `json:"worker_bin"`
+	WorkerHeartbeatInterval string `json:"worker_heartbeat_interval"`
 
 	SetupTimeout    string `json:"setup_timeout"`
 	RunTimeout      string `json:"run_timeout"`
@@ -168,6 +174,8 @@ func main() {
 		DryRun:   cfg.DryRun,
 		RunIDOverride: cfg.RunID,
 		Overwrite: cfg.Overwrite,
+		WorkerBin: cfg.WorkerBin,
+		WorkerHeartbeatInterval: cfg.WorkerHeartbeatInterval.String(),
 
 		SetupTimeout:    cfg.SetupTimeout.String(),
 		RunTimeout:      cfg.RunTimeout.String(),
@@ -178,6 +186,17 @@ func main() {
 
 		Policy: defaultPolicy(),
 	})
+
+	var runPath string
+	if !cfg.DryRun {
+		p, err := prepareRunDir(cfg.RunDir, runID, cfg.Overwrite)
+		if err != nil {
+			emit("artifacts", "run_dir_error", map[string]any{"error": err.Error()})
+			os.Exit(1)
+		}
+		runPath = p
+		emit("artifacts", "run_dir_ready", map[string]any{"path": runPath})
+	}
 
 	// Signal handling:
 	// - first SIGINT/SIGTERM: cancel run context (attempt graceful teardown)
@@ -215,7 +234,7 @@ func main() {
 		os.Exit(130)
 	}()
 
-	code, phases := runPhases(runCtx, cfg, emit)
+	code, phases := runPhases(runCtx, cfg, runID, runPath, emit)
 	stopSignals()
 
 	meta := runMeta{
@@ -230,6 +249,10 @@ func main() {
 			Seed:         cfg.Seed,
 			RunDir:       cfg.RunDir,
 			DryRun:       cfg.DryRun,
+			RunIDOverride: cfg.RunID,
+			Overwrite: cfg.Overwrite,
+			WorkerBin: cfg.WorkerBin,
+			WorkerHeartbeatInterval: cfg.WorkerHeartbeatInterval.String(),
 
 			SetupTimeout:    cfg.SetupTimeout.String(),
 			RunTimeout:      cfg.RunTimeout.String(),
@@ -245,19 +268,19 @@ func main() {
 	}
 
 	if !cfg.DryRun {
-		if err := writeMeta(cfg.RunDir, runID, cfg.Overwrite, meta); err != nil {
+		if err := writeMeta(runPath, meta); err != nil {
 			emit("artifacts", "meta_write_error", map[string]any{"error": err.Error()})
 			code = 1
 		} else {
-			emit("artifacts", "meta_written", map[string]any{"path": filepath.Join(cfg.RunDir, runID, "meta.json")})
+			emit("artifacts", "meta_written", map[string]any{"path": filepath.Join(runPath, "meta.json")})
 		}
 
 		manifest := newWorkerManifest(cfg.Seed, cfg.Readers, cfg.Writers)
-		if err := writeManifest(cfg.RunDir, runID, manifest); err != nil {
+		if err := writeManifest(runPath, manifest); err != nil {
 			emit("artifacts", "manifest_write_error", map[string]any{"error": err.Error()})
 			code = 1
 		} else {
-			emit("artifacts", "manifest_written", map[string]any{"path": filepath.Join(cfg.RunDir, runID, "manifest.json")})
+			emit("artifacts", "manifest_written", map[string]any{"path": filepath.Join(runPath, "manifest.json")})
 		}
 	} else {
 		emit("artifacts", "skipped", map[string]any{"reason": "dry_run"})
@@ -288,16 +311,17 @@ func defaultPolicy() gatingPolicy {
 	}
 }
 
-func runPhases(ctx context.Context, cfg harnessConfig, emit func(phase, name string, fields any)) (int, map[string]phaseMeta) {
+func runPhases(ctx context.Context, cfg harnessConfig, runID, runPath string, emit func(phase, name string, fields any)) (int, map[string]phaseMeta) {
 	// Policy:
 	// - setup failure: do not enter run; attempt teardown best-effort; then fail
 	// - run failure: attempt teardown best-effort; then fail
 	// - teardown failure: fail
 
 	phases := map[string]phaseMeta{}
+	manifest := newWorkerManifest(cfg.Seed, cfg.Readers, cfg.Writers)
 
 	setupErr, setupMeta := runPhase(ctx, "setup", cfg.SetupTimeout, emit, func(pctx context.Context) error {
-		emit("setup", "manifest", newWorkerManifest(cfg.Seed, cfg.Readers, cfg.Writers))
+		emit("setup", "manifest", manifest)
 		return sleepWithContext(pctx, cfg.SetupDelay)
 	})
 	phases["setup"] = setupMeta
@@ -306,7 +330,10 @@ func runPhases(ctx context.Context, cfg harnessConfig, emit func(phase, name str
 	var runMeta phaseMeta
 	if setupErr == nil {
 		runErr, runMeta = runPhase(ctx, "run", cfg.RunTimeout, emit, func(pctx context.Context) error {
-			return runWithTicks(pctx, cfg.Duration, cfg.TickInterval, emit)
+			if cfg.DryRun {
+				return runWithTicks(pctx, cfg.Duration, cfg.TickInterval, emit)
+			}
+			return runWorkersAndTicks(pctx, cfg, runID, runPath, manifest, emit)
 		})
 		phases["run"] = runMeta
 	}
@@ -429,6 +456,8 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs.BoolVar(&cfg.DryRun, "dry-run", true, "If true, perform no side effects (default true for now)")
 	fs.StringVar(&cfg.RunID, "run-id", "", "Explicit run id (optional). If set and artifacts exist, run fails unless --overwrite")
 	fs.BoolVar(&cfg.Overwrite, "overwrite", false, "Overwrite existing run directory when --run-id collides")
+	fs.StringVar(&cfg.WorkerBin, "worker-bin", "worker", "Worker executable path (Phase 5+). Must be resolvable in PATH or be a filepath.")
+	fs.DurationVar(&cfg.WorkerHeartbeatInterval, "worker-heartbeat-interval", 1*time.Second, "Worker heartbeat interval (Phase 5+)")
 
 	fs.DurationVar(&cfg.SetupTimeout, "setup-timeout", 10*time.Second, "Setup phase timeout")
 	fs.DurationVar(&cfg.RunTimeout, "run-timeout", 0, "Run phase timeout (0 = duration + 5s)")
@@ -463,6 +492,9 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	}
 	if cfg.TickInterval <= 0 {
 		return harnessConfig{}, false, fmt.Errorf("--tick-interval must be > 0")
+	}
+	if cfg.WorkerHeartbeatInterval <= 0 {
+		return harnessConfig{}, false, fmt.Errorf("--worker-heartbeat-interval must be > 0")
 	}
 	if cfg.SetupTimeout <= 0 {
 		return harnessConfig{}, false, fmt.Errorf("--setup-timeout must be > 0")
@@ -521,27 +553,13 @@ func isBrokenPipe(err error) bool {
 	return errors.Is(err, syscall.EPIPE)
 }
 
-func writeMeta(runDir, runID string, overwrite bool, meta runMeta) error {
-	dir := filepath.Join(runDir, runID)
-	if _, err := os.Stat(dir); err == nil {
-		if !overwrite {
-			return fmt.Errorf("run directory already exists: %s (use --overwrite to replace)", dir)
-		}
-		if err := os.RemoveAll(dir); err != nil {
-			return err
-		}
-	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
+func writeMeta(runPath string, meta runMeta) error {
 	b, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
-	return os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
+	return os.WriteFile(filepath.Join(runPath, "meta.json"), b, 0o644)
 }
 
 func validateRunID(id string) error {
@@ -561,14 +579,208 @@ func validateRunID(id string) error {
 	return nil
 }
 
-func writeManifest(runDir, runID string, manifest workerManifest) error {
-	dir := filepath.Join(runDir, runID)
+func writeManifest(runPath string, manifest workerManifest) error {
 	b, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err
 	}
 	b = append(b, '\n')
-	return os.WriteFile(filepath.Join(dir, "manifest.json"), b, 0o644)
+	return os.WriteFile(filepath.Join(runPath, "manifest.json"), b, 0o644)
+}
+
+func prepareRunDir(runDir, runID string, overwrite bool) (string, error) {
+	runPath := filepath.Join(runDir, runID)
+	if _, err := os.Stat(runPath); err == nil {
+		if !overwrite {
+			return "", fmt.Errorf("run directory already exists: %s (use --overwrite to replace)", runPath)
+		}
+		if err := os.RemoveAll(runPath); err != nil {
+			return "", err
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if err := os.MkdirAll(filepath.Join(runPath, "workers"), 0o755); err != nil {
+		return "", err
+	}
+	return runPath, nil
+}
+
+type workerProc struct {
+	spec workerSpec
+	cmd  *exec.Cmd
+
+	stdin io.WriteCloser
+
+	readyCh chan struct{}
+	exitCh  chan error
+}
+
+func runWorkersAndTicks(
+	ctx context.Context,
+	cfg harnessConfig,
+	runID, runPath string,
+	manifest workerManifest,
+	emit func(phase, name string, fields any),
+) error {
+	workerBin, err := exec.LookPath(cfg.WorkerBin)
+	if err != nil {
+		return fmt.Errorf("failed to find worker binary %q: %w", cfg.WorkerBin, err)
+	}
+
+	procs := make([]*workerProc, 0, len(manifest.Workers))
+	for _, w := range manifest.Workers {
+		p, err := startWorker(ctx, workerBin, runID, runPath, w, cfg.WorkerHeartbeatInterval, emit)
+		if err != nil {
+			return err
+		}
+		procs = append(procs, p)
+	}
+	emit("run", "workers_spawned", map[string]any{"count": len(procs)})
+
+	// Ready barrier.
+	for _, p := range procs {
+		select {
+		case <-p.readyCh:
+		case err := <-p.exitCh:
+			if err == nil {
+				return fmt.Errorf("worker %s exited before ready", p.spec.ID)
+			}
+			return fmt.Errorf("worker %s exited before ready: %w", p.spec.ID, err)
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	emit("run", "all_ready", map[string]any{"count": len(procs)})
+
+	// Start signal.
+	for _, p := range procs {
+		if _, err := io.WriteString(p.stdin, "start\n"); err != nil {
+			return fmt.Errorf("failed to send start to worker %s: %w", p.spec.ID, err)
+		}
+	}
+	emit("run", "all_started", map[string]any{"count": len(procs)})
+
+	// Run ticks for duration (or until cancel).
+	runErr := runWithTicks(ctx, cfg.Duration, cfg.TickInterval, emit)
+
+	// Stop workers gracefully (SIGINT) and wait for exit.
+	for _, p := range procs {
+		_ = p.cmd.Process.Signal(os.Interrupt)
+	}
+	emit("run", "workers_interrupt_sent", map[string]any{"count": len(procs)})
+
+	for _, p := range procs {
+		select {
+		case <-p.exitCh:
+		case <-time.After(5 * time.Second):
+			return fmt.Errorf("timeout waiting for worker %s to exit", p.spec.ID)
+		}
+	}
+	emit("run", "workers_exited", map[string]any{"count": len(procs)})
+
+	return runErr
+}
+
+func startWorker(
+	ctx context.Context,
+	workerBin string,
+	runID string,
+	runPath string,
+	spec workerSpec,
+	heartbeat time.Duration,
+	emit func(phase, name string, fields any),
+) (*workerProc, error) {
+	workerDir := filepath.Join(runPath, "workers", spec.ID)
+	if err := os.MkdirAll(workerDir, 0o755); err != nil {
+		return nil, err
+	}
+
+	args := []string{
+		"--run-id", runID,
+		"--worker-id", spec.ID,
+		"--role", string(spec.Role),
+		"--heartbeat-interval", heartbeat.String(),
+		"--wait-for-start=true",
+	}
+
+	cmd := exec.CommandContext(ctx, workerBin, args...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+
+	stdoutFile, err := os.Create(filepath.Join(workerDir, "stdout.jsonl"))
+	if err != nil {
+		return nil, err
+	}
+	stderrFile, err := os.Create(filepath.Join(workerDir, "stderr.log"))
+	if err != nil {
+		_ = stdoutFile.Close()
+		return nil, err
+	}
+
+	p := &workerProc{
+		spec:    spec,
+		cmd:     cmd,
+		stdin:   stdin,
+		readyCh: make(chan struct{}),
+		exitCh:  make(chan error, 1),
+	}
+
+	go func() {
+		defer func() {
+			_ = stdoutFile.Close()
+		}()
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			line := sc.Text()
+			_, _ = stdoutFile.WriteString(line + "\n")
+
+			// Parse ready event.
+			var m map[string]any
+			if err := json.Unmarshal([]byte(line), &m); err == nil {
+				if ev, _ := m["event"].(string); ev == "ready" {
+					select {
+					case <-p.readyCh:
+					default:
+						close(p.readyCh)
+						emit("run", "worker_ready", map[string]any{"worker_id": spec.ID, "role": spec.Role})
+					}
+				}
+			}
+		}
+	}()
+
+	go func() {
+		defer func() { _ = stderrFile.Close() }()
+		sc := bufio.NewScanner(stderr)
+		for sc.Scan() {
+			_, _ = stderrFile.WriteString(sc.Text() + "\n")
+		}
+	}()
+
+	if err := cmd.Start(); err != nil {
+		_ = stdoutFile.Close()
+		_ = stderrFile.Close()
+		return nil, err
+	}
+	emit("run", "worker_spawned", map[string]any{"worker_id": spec.ID, "role": spec.Role})
+
+	go func() {
+		err := cmd.Wait()
+		p.exitCh <- err
+	}()
+
+	return p, nil
 }
 
 func newWorkerManifest(seed int64, readers, writers int) workerManifest {
