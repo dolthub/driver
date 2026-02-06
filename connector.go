@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -36,7 +37,6 @@ import (
 	eventsapi "github.com/dolthub/eventsapi_schema/dolt/services/eventsapi/v1alpha1"
 	gmssql "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/vitess/go/mysql"
-	"github.com/google/uuid"
 )
 
 var _ driver.Connector = (*Connector)(nil)
@@ -310,8 +310,17 @@ func emitUsageEvent(ctx context.Context, mrEnv *env.MultiRepoEnv) {
 	})
 
 	// no dolt db created yet, which means we can't create a GRPC dialer
-	// TODO: we don't really need a dEnv to send metrics in the simple case but it's hard to disentangle
 	if dEnv == nil {
+		return
+	}
+
+	dir, err := dEnv.TempTableFilesDir()
+	if err != nil {
+		return
+	}
+
+	mtimeFile, tooSoon := tooSoonToEmitMetrics(dir)
+	if tooSoon {
 		return
 	}
 
@@ -327,25 +336,29 @@ func emitUsageEvent(ctx context.Context, mrEnv *env.MultiRepoEnv) {
 	clientEvents := evtCollector.Close()
 	_ = emitter.LogEvents(ctx, doltversion.Version, clientEvents)
 
-	// Emit a heart-beat event once every 24 hours
-	duration, _ := time.ParseDuration("24h")
-	ticker := time.NewTicker(duration)
-	defer ticker.Stop()
+	// update the last modified time
+	_ = os.Chtimes(mtimeFile, time.Now(), time.Now())
+}
 
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			t := events.NowTimestamp()
-			_ = emitter.LogEvents(ctx, doltversion.Version, []*eventsapi.ClientEvent{
-				{
-					Id:        uuid.New().String(),
-					StartTime: t,
-					EndTime:   t,
-					Type:      eventsapi.ClientEventType_SQL_SERVER_HEARTBEAT,
-				},
-			})
-		}
+const metricsInterval = time.Hour * 24
+
+// tooSoonToEmitMetrics checks if it's been less than 24 hours since the last metrics event was emitted, by checking
+// the mod time of a file in the given directory.
+// Returns the path to the file used for tracking mod time, and whether it's too soon to emit metrics.
+func tooSoonToEmitMetrics(dir string) (string, bool) {
+	mtimeFile := filepath.Join(dir, "dolt_embedded_metrics")
+	f, err := os.OpenFile(mtimeFile, os.O_CREATE, 0644)
+	if err != nil {
+		return "", true
 	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return "", true
+	}
+
+	if time.Now().Sub(info.ModTime()) < metricsInterval {
+		return "", true
+	}
+	return mtimeFile, false
 }
