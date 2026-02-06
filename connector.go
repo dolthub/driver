@@ -310,6 +310,7 @@ func emitUsageEvent(ctx context.Context, mrEnv *env.MultiRepoEnv) {
 	})
 
 	// no dolt db created yet, which means we can't create a GRPC dialer
+	// TODO: we don't really need a dEnv to send metrics in the simple case but it's hard to disentangle
 	if dEnv == nil {
 		return
 	}
