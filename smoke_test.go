@@ -548,6 +548,10 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 // using the Dolt driver. The connection, |conn|, is returned, and |cleanupFunc| is a function that the test function
 // should defer in order to properly dispose of test resources.
 func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn *sql.Conn, cleanUpFunc func()) {
+	// disable metrics during test runs
+	// no need to set it back to false since no test should have it set to true
+	metricsDisabled = true
+
 	dir, err := os.MkdirTemp("", "dolthub-driver-tests-db*")
 	require.NoError(t, err)
 

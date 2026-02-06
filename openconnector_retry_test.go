@@ -32,6 +32,10 @@ import (
 )
 
 func TestOpenConnectorRetriesWhenEnabled(t *testing.T) {
+	// disable metrics during test runs
+	// no need to set it back to false since no test should have it set to true
+	metricsDisabled = true
+
 	dir := t.TempDir()
 
 	var calls int32
