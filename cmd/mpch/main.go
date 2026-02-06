@@ -26,6 +26,8 @@ type harnessConfig struct {
 	Seed     int64
 	RunDir   string
 	DryRun   bool
+	RunID     string
+	Overwrite bool
 
 	SetupTimeout    time.Duration
 	RunTimeout      time.Duration
@@ -54,6 +56,8 @@ type planFields struct {
 	Seed     int64  `json:"seed"`
 	RunDir   string `json:"run_dir"`
 	DryRun   bool   `json:"dry_run"`
+	RunIDOverride string `json:"run_id_override,omitempty"`
+	Overwrite     bool   `json:"overwrite"`
 
 	SetupTimeout    string `json:"setup_timeout"`
 	RunTimeout      string `json:"run_timeout"`
@@ -92,10 +96,13 @@ func main() {
 		os.Exit(2)
 	}
 
-	runID, err := newRunID()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "failed to generate run id:", err)
-		os.Exit(1)
+	runID := cfg.RunID
+	if runID == "" {
+		runID, err = newRunID()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "failed to generate run id:", err)
+			os.Exit(1)
+		}
 	}
 
 	// If mpch is piped to a consumer like `head`, the consumer may exit early and close
@@ -133,6 +140,8 @@ func main() {
 		Seed:     cfg.Seed,
 		RunDir:   cfg.RunDir,
 		DryRun:   cfg.DryRun,
+		RunIDOverride: cfg.RunID,
+		Overwrite: cfg.Overwrite,
 
 		SetupTimeout:    cfg.SetupTimeout.String(),
 		RunTimeout:      cfg.RunTimeout.String(),
@@ -210,7 +219,7 @@ func main() {
 	}
 
 	if !cfg.DryRun {
-		if err := writeMeta(cfg.RunDir, runID, meta); err != nil {
+		if err := writeMeta(cfg.RunDir, runID, cfg.Overwrite, meta); err != nil {
 			emit("artifacts", "meta_write_error", map[string]any{"error": err.Error()})
 			code = 1
 		} else {
@@ -383,6 +392,8 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs.Int64Var(&cfg.Seed, "seed", time.Now().UnixNano(), "Seed for deterministic planning (future)")
 	fs.StringVar(&cfg.RunDir, "run-dir", "./runs", "Directory for run artifacts (future)")
 	fs.BoolVar(&cfg.DryRun, "dry-run", true, "If true, perform no side effects (default true for now)")
+	fs.StringVar(&cfg.RunID, "run-id", "", "Explicit run id (optional). If set and artifacts exist, run fails unless --overwrite")
+	fs.BoolVar(&cfg.Overwrite, "overwrite", false, "Overwrite existing run directory when --run-id collides")
 
 	fs.DurationVar(&cfg.SetupTimeout, "setup-timeout", 10*time.Second, "Setup phase timeout")
 	fs.DurationVar(&cfg.RunTimeout, "run-timeout", 0, "Run phase timeout (0 = duration + 5s)")
@@ -436,6 +447,9 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	if cfg.RunDir == "" {
 		return harnessConfig{}, false, fmt.Errorf("--run-dir cannot be empty")
 	}
+	if err := validateRunID(cfg.RunID); err != nil {
+		return harnessConfig{}, false, err
+	}
 
 	if cfg.RunTimeout == 0 {
 		cfg.RunTimeout = cfg.Duration + 5*time.Second
@@ -472,8 +486,18 @@ func isBrokenPipe(err error) bool {
 	return errors.Is(err, syscall.EPIPE)
 }
 
-func writeMeta(runDir, runID string, meta runMeta) error {
+func writeMeta(runDir, runID string, overwrite bool, meta runMeta) error {
 	dir := filepath.Join(runDir, runID)
+	if _, err := os.Stat(dir); err == nil {
+		if !overwrite {
+			return fmt.Errorf("run directory already exists: %s (use --overwrite to replace)", dir)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			return err
+		}
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -483,5 +507,22 @@ func writeMeta(runDir, runID string, meta runMeta) error {
 	}
 	b = append(b, '\n')
 	return os.WriteFile(filepath.Join(dir, "meta.json"), b, 0o644)
+}
+
+func validateRunID(id string) error {
+	if id == "" {
+		return nil
+	}
+	for _, r := range id {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '-' || r == '_':
+		default:
+			return fmt.Errorf("--run-id may only contain [A-Za-z0-9_-]")
+		}
+	}
+	return nil
 }
 

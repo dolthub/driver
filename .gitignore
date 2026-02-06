@@ -1,6 +1,6 @@
 **/.idea/
 **/.dolt/
-**/_mpch_runs_test
+**/_mpch_runs_*
 .beads
 .vscode
 .run
