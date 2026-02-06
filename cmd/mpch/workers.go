@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"syscall"
 	"time"
 )
 
@@ -135,7 +134,7 @@ func startWorker(
 	}
 
 	cmd := exec.CommandContext(ctx, workerBin, argv...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setWorkerSysProcAttr(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -241,9 +240,7 @@ func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit fu
 
 	// First: SIGINT.
 	for _, p := range procs {
-		if p.cmd != nil && p.cmd.Process != nil {
-			_ = p.cmd.Process.Signal(os.Interrupt)
-		}
+		interruptWorker(p)
 	}
 	emit("run", "workers_interrupt_sent", map[string]any{"count": len(procs)})
 
@@ -291,20 +288,15 @@ func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit fu
 	return nil
 
 KILL:
-	// Escalate: SIGKILL process group.
+	// Escalate: force kill.
 	killed := 0
 	for _, p := range procs {
 		if _, ok := done[p]; ok {
 			continue
 		}
-		if p.cmd == nil || p.cmd.Process == nil {
-			continue
+		if killWorker(p) {
+			killed++
 		}
-		pid := p.cmd.Process.Pid
-		// Kill the whole process group (negative pid) when available.
-		_ = syscall.Kill(-pid, syscall.SIGKILL)
-		_ = p.cmd.Process.Kill()
-		killed++
 	}
 	emit("run", "workers_kill_sent", map[string]any{"count": killed})
 

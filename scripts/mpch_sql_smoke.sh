@@ -19,7 +19,15 @@ OUT_BASE="$TEST_DIR"
 BIN_DIR="$OUT_BASE/bin"
 DBS_DIR="$OUT_BASE/dbs"
 RUNS_DIR="$OUT_BASE/runs"
-RUN_ID="${MPCH_RUN_ID:-run_5w_3r_5m}"
+
+# Scenario (adjust as desired)
+WRITERS="${MPCH_WRITERS:-10}"
+READERS="${MPCH_READERS:-5}"
+DURATION="${MPCH_DURATION:-5m}"
+
+# Default run id is derived from the scenario unless overridden.
+DEFAULT_RUN_ID="run_${WRITERS}w_${READERS}r_${DURATION}"
+RUN_ID="${MPCH_RUN_ID:-$DEFAULT_RUN_ID}"
 
 echo "[mpch-smoke] repo: $ROOT"
 echo "[mpch-smoke] test: $TEST_DIR"
@@ -37,13 +45,13 @@ DSN="file://$DBS_DIR?commitname=MPCH&commitemail=mpch@example.com"
 OUT_JSONL="$OUT_BASE/mpch.$RUN_ID.jsonl"
 OUT_STDERR="$OUT_BASE/mpch.$RUN_ID.stderr"
 
-echo "[mpch-smoke] running mpch (sql mode) run_id=$RUN_ID writers=5 readers=3 duration=5m..."
+echo "[mpch-smoke] running mpch (sql mode) run_id=$RUN_ID writers=$WRITERS readers=$READERS duration=$DURATION..."
 set +e
 "$BIN_DIR/mpch" \
   --dsn "$DSN" \
-  --writers 5 --readers 3 \
+  --writers "$WRITERS" --readers "$READERS" \
   --seed 123 \
-  --duration 5m \
+  --duration "$DURATION" \
   --tick-interval 5s \
   --worker-mode sql \
   --worker-db mpch_test \
