@@ -20,6 +20,7 @@ type config struct {
 	HeartbeatInterval time.Duration
 	Duration          time.Duration
 	WaitForStart      bool
+	IgnoreInterrupt   bool
 }
 
 type event struct {
@@ -71,7 +72,9 @@ func main() {
 	go func() {
 		sig := <-sigCh
 		emit("interrupt", map[string]any{"signal": sig.String()})
-		cancel()
+		if !cfg.IgnoreInterrupt {
+			cancel()
+		}
 	}()
 
 	emit("ready", map[string]any{
@@ -168,6 +171,7 @@ func parseArgs(args []string) (cfg config, showHelp bool, _ error) {
 	fs.DurationVar(&cfg.HeartbeatInterval, "heartbeat-interval", 1*time.Second, "Heartbeat interval")
 	fs.DurationVar(&cfg.Duration, "duration", 0, "Optional duration before clean exit (0 = run until signal)")
 	fs.BoolVar(&cfg.WaitForStart, "wait-for-start", false, "If true, emit ready then wait for a start signal on stdin")
+	fs.BoolVar(&cfg.IgnoreInterrupt, "ignore-interrupt", false, "If true, emit interrupt event but do not stop (for testing orchestrator kill paths)")
 
 	fs.Usage = func() {
 		fmt.Fprintln(os.Stdout, "Usage: worker --worker-id <id> --role <reader|writer> [flags]")

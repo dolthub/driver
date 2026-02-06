@@ -33,6 +33,9 @@ type harnessConfig struct {
 	Overwrite bool
 	WorkerBin string
 	WorkerHeartbeatInterval time.Duration
+	WorkerShutdownGrace time.Duration
+	WorkerShutdownKillWait time.Duration
+	WorkerIgnoreInterrupt bool
 
 	SetupTimeout    time.Duration
 	RunTimeout      time.Duration
@@ -65,6 +68,9 @@ type planFields struct {
 	Overwrite     bool   `json:"overwrite"`
 	WorkerBin string `json:"worker_bin"`
 	WorkerHeartbeatInterval string `json:"worker_heartbeat_interval"`
+	WorkerShutdownGrace string `json:"worker_shutdown_grace"`
+	WorkerShutdownKillWait string `json:"worker_shutdown_kill_wait"`
+	WorkerIgnoreInterrupt bool `json:"worker_ignore_interrupt"`
 
 	SetupTimeout    string `json:"setup_timeout"`
 	RunTimeout      string `json:"run_timeout"`
@@ -176,6 +182,9 @@ func main() {
 		Overwrite: cfg.Overwrite,
 		WorkerBin: cfg.WorkerBin,
 		WorkerHeartbeatInterval: cfg.WorkerHeartbeatInterval.String(),
+		WorkerShutdownGrace: cfg.WorkerShutdownGrace.String(),
+		WorkerShutdownKillWait: cfg.WorkerShutdownKillWait.String(),
+		WorkerIgnoreInterrupt: cfg.WorkerIgnoreInterrupt,
 
 		SetupTimeout:    cfg.SetupTimeout.String(),
 		RunTimeout:      cfg.RunTimeout.String(),
@@ -253,6 +262,9 @@ func main() {
 			Overwrite: cfg.Overwrite,
 			WorkerBin: cfg.WorkerBin,
 			WorkerHeartbeatInterval: cfg.WorkerHeartbeatInterval.String(),
+			WorkerShutdownGrace: cfg.WorkerShutdownGrace.String(),
+			WorkerShutdownKillWait: cfg.WorkerShutdownKillWait.String(),
+			WorkerIgnoreInterrupt: cfg.WorkerIgnoreInterrupt,
 
 			SetupTimeout:    cfg.SetupTimeout.String(),
 			RunTimeout:      cfg.RunTimeout.String(),
@@ -458,6 +470,9 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs.BoolVar(&cfg.Overwrite, "overwrite", false, "Overwrite existing run directory when --run-id collides")
 	fs.StringVar(&cfg.WorkerBin, "worker-bin", "worker", "Worker executable path (Phase 5+). Must be resolvable in PATH or be a filepath.")
 	fs.DurationVar(&cfg.WorkerHeartbeatInterval, "worker-heartbeat-interval", 1*time.Second, "Worker heartbeat interval (Phase 5+)")
+	fs.DurationVar(&cfg.WorkerShutdownGrace, "worker-shutdown-grace", 2*time.Second, "How long to wait after SIGINT before escalating to SIGKILL (Phase 5+)")
+	fs.DurationVar(&cfg.WorkerShutdownKillWait, "worker-shutdown-kill-wait", 2*time.Second, "How long to wait after SIGKILL for workers to exit (Phase 5+)")
+	fs.BoolVar(&cfg.WorkerIgnoreInterrupt, "worker-ignore-interrupt", false, "Pass --ignore-interrupt=true to workers (for testing orchestrator kill paths)")
 
 	fs.DurationVar(&cfg.SetupTimeout, "setup-timeout", 10*time.Second, "Setup phase timeout")
 	fs.DurationVar(&cfg.RunTimeout, "run-timeout", 0, "Run phase timeout (0 = duration + 5s)")
@@ -495,6 +510,12 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	}
 	if cfg.WorkerHeartbeatInterval <= 0 {
 		return harnessConfig{}, false, fmt.Errorf("--worker-heartbeat-interval must be > 0")
+	}
+	if cfg.WorkerShutdownGrace <= 0 {
+		return harnessConfig{}, false, fmt.Errorf("--worker-shutdown-grace must be > 0")
+	}
+	if cfg.WorkerShutdownKillWait <= 0 {
+		return harnessConfig{}, false, fmt.Errorf("--worker-shutdown-kill-wait must be > 0")
 	}
 	if cfg.SetupTimeout <= 0 {
 		return harnessConfig{}, false, fmt.Errorf("--setup-timeout must be > 0")
@@ -611,9 +632,20 @@ type workerProc struct {
 	cmd  *exec.Cmd
 
 	stdin io.WriteCloser
+	workerDir string
 
 	readyCh chan struct{}
 	exitCh  chan error
+}
+
+type workerTermination struct {
+	TS time.Time `json:"ts"`
+	WorkerID string `json:"worker_id"`
+	Role workerRole `json:"role"`
+	Reason string `json:"reason"`
+	Signal string `json:"signal,omitempty"`
+	Killed bool `json:"killed"`
+	ExitError string `json:"exit_error,omitempty"`
 }
 
 func runWorkersAndTicks(
@@ -622,15 +654,25 @@ func runWorkersAndTicks(
 	runID, runPath string,
 	manifest workerManifest,
 	emit func(phase, name string, fields any),
-) error {
+) (retErr error) {
 	workerBin, err := exec.LookPath(cfg.WorkerBin)
 	if err != nil {
 		return fmt.Errorf("failed to find worker binary %q: %w", cfg.WorkerBin, err)
 	}
 
 	procs := make([]*workerProc, 0, len(manifest.Workers))
+	defer func() {
+		if err := shutdownWorkers(procs, cfg.WorkerShutdownGrace, cfg.WorkerShutdownKillWait, emit); err != nil {
+			if retErr == nil {
+				retErr = err
+			} else {
+				retErr = fmt.Errorf("%v; shutdown error: %w", retErr, err)
+			}
+		}
+	}()
+
 	for _, w := range manifest.Workers {
-		p, err := startWorker(ctx, workerBin, runID, runPath, w, cfg.WorkerHeartbeatInterval, emit)
+		p, err := startWorker(ctx, workerBin, runID, runPath, w, cfg.WorkerHeartbeatInterval, cfg.WorkerIgnoreInterrupt, emit)
 		if err != nil {
 			return err
 		}
@@ -663,22 +705,7 @@ func runWorkersAndTicks(
 
 	// Run ticks for duration (or until cancel).
 	runErr := runWithTicks(ctx, cfg.Duration, cfg.TickInterval, emit)
-
-	// Stop workers gracefully (SIGINT) and wait for exit.
-	for _, p := range procs {
-		_ = p.cmd.Process.Signal(os.Interrupt)
-	}
-	emit("run", "workers_interrupt_sent", map[string]any{"count": len(procs)})
-
-	for _, p := range procs {
-		select {
-		case <-p.exitCh:
-		case <-time.After(5 * time.Second):
-			return fmt.Errorf("timeout waiting for worker %s to exit", p.spec.ID)
-		}
-	}
-	emit("run", "workers_exited", map[string]any{"count": len(procs)})
-
+	// cleanup() will stop workers.
 	return runErr
 }
 
@@ -689,6 +716,7 @@ func startWorker(
 	runPath string,
 	spec workerSpec,
 	heartbeat time.Duration,
+	ignoreInterrupt bool,
 	emit func(phase, name string, fields any),
 ) (*workerProc, error) {
 	workerDir := filepath.Join(runPath, "workers", spec.ID)
@@ -703,8 +731,12 @@ func startWorker(
 		"--heartbeat-interval", heartbeat.String(),
 		"--wait-for-start=true",
 	}
+	if ignoreInterrupt {
+		args = append(args, "--ignore-interrupt=true")
+	}
 
 	cmd := exec.CommandContext(ctx, workerBin, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -732,6 +764,7 @@ func startWorker(
 		spec:    spec,
 		cmd:     cmd,
 		stdin:   stdin,
+		workerDir: workerDir,
 		readyCh: make(chan struct{}),
 		exitCh:  make(chan error, 1),
 	}
@@ -781,6 +814,171 @@ func startWorker(
 	}()
 
 	return p, nil
+}
+
+func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit func(phase, name string, fields any)) error {
+	if len(procs) == 0 {
+		return nil
+	}
+
+	// Close stdin (best-effort) to avoid hanging on input.
+	for _, p := range procs {
+		if p.stdin != nil {
+			_ = p.stdin.Close()
+		}
+	}
+
+	// First: SIGINT.
+	for _, p := range procs {
+		if p.cmd != nil && p.cmd.Process != nil {
+			_ = p.cmd.Process.Signal(os.Interrupt)
+		}
+	}
+	emit("run", "workers_interrupt_sent", map[string]any{"count": len(procs)})
+
+	deadline := time.NewTimer(grace)
+	defer deadline.Stop()
+
+	done := make(map[*workerProc]error, len(procs))
+	for len(done) < len(procs) {
+		progress := false
+		for _, p := range procs {
+			if _, ok := done[p]; ok {
+				continue
+			}
+			select {
+			case err := <-p.exitCh:
+				done[p] = err
+				progress = true
+			default:
+			}
+		}
+		if progress {
+			continue
+		}
+
+		select {
+		case <-deadline.C:
+			goto KILL
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	emit("run", "workers_exited", map[string]any{"count": len(procs), "killed": 0})
+	for p, err := range done {
+		_ = writeTermination(p, workerTermination{
+			TS: time.Now().UTC(),
+			WorkerID: p.spec.ID,
+			Role: p.spec.Role,
+			Reason: "graceful_exit",
+			Signal: "SIGINT",
+			Killed: false,
+			ExitError: exitErrString(err),
+		})
+	}
+	return nil
+
+KILL:
+	// Escalate: SIGKILL process group.
+	killed := 0
+	for _, p := range procs {
+		if _, ok := done[p]; ok {
+			continue
+		}
+		if p.cmd == nil || p.cmd.Process == nil {
+			continue
+		}
+		pid := p.cmd.Process.Pid
+		// Kill the whole process group (negative pid) when available.
+		_ = syscall.Kill(-pid, syscall.SIGKILL)
+		_ = p.cmd.Process.Kill()
+		killed++
+	}
+	emit("run", "workers_kill_sent", map[string]any{"count": killed})
+
+	killDeadline := time.NewTimer(killWait)
+	defer killDeadline.Stop()
+	for len(done) < len(procs) {
+		progress := false
+		for _, p := range procs {
+			if _, ok := done[p]; ok {
+				continue
+			}
+			select {
+			case err := <-p.exitCh:
+				done[p] = err
+				progress = true
+			default:
+			}
+		}
+		if progress {
+			continue
+		}
+		select {
+		case <-killDeadline.C:
+			emit("run", "workers_kill_timeout", map[string]any{"remaining": len(procs) - len(done)})
+			for _, p := range procs {
+				if _, ok := done[p]; ok {
+					continue
+				}
+				_ = writeTermination(p, workerTermination{
+					TS: time.Now().UTC(),
+					WorkerID: p.spec.ID,
+					Role: p.spec.Role,
+					Reason: "kill_timeout",
+					Signal: "SIGKILL",
+					Killed: true,
+				})
+			}
+			return fmt.Errorf("timeout waiting for %d worker(s) to exit after SIGKILL", len(procs)-len(done))
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+
+	emit("run", "workers_exited", map[string]any{"count": len(procs), "killed": killed})
+	for _, p := range procs {
+		err := done[p]
+		term := workerTermination{
+			TS: time.Now().UTC(),
+			WorkerID: p.spec.ID,
+			Role: p.spec.Role,
+			Killed: false,
+			ExitError: exitErrString(err),
+		}
+		if err == nil {
+			term.Reason = "graceful_exit"
+			term.Signal = "SIGINT"
+		} else if killed > 0 {
+			term.Reason = "killed_after_grace_timeout"
+			term.Signal = "SIGKILL"
+			term.Killed = true
+		} else {
+			term.Reason = "exited_with_error"
+		}
+		_ = writeTermination(p, term)
+	}
+	return fmt.Errorf("one or more workers required SIGKILL after grace timeout")
+}
+
+func writeTermination(p *workerProc, term workerTermination) error {
+	if p == nil || p.workerDir == "" {
+		return nil
+	}
+	b, err := json.MarshalIndent(term, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	return os.WriteFile(filepath.Join(p.workerDir, "termination.json"), b, 0o644)
+}
+
+func exitErrString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 func newWorkerManifest(seed int64, readers, writers int) workerManifest {
