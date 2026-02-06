@@ -140,3 +140,40 @@ func TestRunPhases_CanceledContextStillAttemptsTeardown(t *testing.T) {
 	}
 }
 
+func TestRunWithTicks_MonotonicAndBounded(t *testing.T) {
+	t.Parallel()
+
+	var ticks []tickFields
+	emit := func(phase, name string, fields any) {
+		if phase != "run" || name != "tick" {
+			return
+		}
+		tf, ok := fields.(tickFields)
+		if !ok {
+			t.Fatalf("unexpected tick fields type: %T", fields)
+		}
+		ticks = append(ticks, tf)
+	}
+
+	dur := 30 * time.Millisecond
+	interval := 5 * time.Millisecond
+	err := runWithTicks(context.Background(), dur, interval, emit)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Bounded: should not produce unbounded ticks.
+	maxTicks := int(dur/interval) + 1
+	if len(ticks) > maxTicks {
+		t.Fatalf("too many ticks: got %d max %d; ticks=%v", len(ticks), maxTicks, ticks)
+	}
+
+	// Monotonic: count should strictly increase starting at 1.
+	for i := range ticks {
+		want := i + 1
+		if ticks[i].Count != want {
+			t.Fatalf("non-monotonic count at i=%d: got %d want %d; ticks=%v", i, ticks[i].Count, want, ticks)
+		}
+	}
+}
+

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ type harnessConfig struct {
 	Readers  int
 	Writers  int
 	Duration time.Duration
+	TickInterval time.Duration
 	Seed     int64
 	RunDir   string
 	DryRun   bool
@@ -46,6 +48,7 @@ type planFields struct {
 	Readers  int    `json:"readers"`
 	Writers  int    `json:"writers"`
 	Duration string `json:"duration"`
+	TickInterval string `json:"tick_interval"`
 	Seed     int64  `json:"seed"`
 	RunDir   string `json:"run_dir"`
 	DryRun   bool   `json:"dry_run"`
@@ -76,6 +79,11 @@ func main() {
 		os.Exit(1)
 	}
 
+	// If mpch is piped to a consumer like `head`, the consumer may exit early and close
+	// the pipe. Ignore SIGPIPE so writes fail with EPIPE instead, which we treat as a
+	// clean termination.
+	signal.Ignore(syscall.SIGPIPE)
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetEscapeHTML(false)
 
@@ -87,6 +95,11 @@ func main() {
 			Event:  name,
 			Fields: fields,
 		}); err != nil {
+			// If the consumer of stdout exits early (e.g. piped to `head`), treat EPIPE as
+			// a clean termination: continuing would just spam stderr and exit non-zero.
+			if isBrokenPipe(err) {
+				os.Exit(0)
+			}
 			fmt.Fprintln(os.Stderr, "failed to write event:", err)
 			os.Exit(1)
 		}
@@ -97,6 +110,7 @@ func main() {
 		Readers:  cfg.Readers,
 		Writers:  cfg.Writers,
 		Duration: cfg.Duration.String(),
+		TickInterval: cfg.TickInterval.String(),
 		Seed:     cfg.Seed,
 		RunDir:   cfg.RunDir,
 		DryRun:   cfg.DryRun,
@@ -121,12 +135,24 @@ func main() {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
+	done := make(chan struct{})
+	defer close(done)
+
 	go func() {
-		sig := <-sigCh
+		var sig os.Signal
+		select {
+		case sig = <-sigCh:
+		case <-done:
+			return
+		}
 		emit("control", "interrupt", map[string]any{"signal": sig.String()})
 		cancel()
 
-		sig = <-sigCh
+		select {
+		case sig = <-sigCh:
+		case <-done:
+			return
+		}
 		emit("control", "interrupt_force_exit", map[string]any{"signal": sig.String()})
 		os.Exit(130)
 	}()
@@ -169,7 +195,7 @@ func runPhases(ctx context.Context, cfg harnessConfig, emit func(phase, name str
 	var runErr error
 	if setupErr == nil {
 		runErr = runPhase(ctx, "run", cfg.RunTimeout, emit, func(pctx context.Context) error {
-			return sleepWithContext(pctx, cfg.Duration)
+			return runWithTicks(pctx, cfg.Duration, cfg.TickInterval, emit)
 		})
 	}
 
@@ -230,6 +256,42 @@ func sleepWithContext(ctx context.Context, d time.Duration) error {
 	}
 }
 
+type tickFields struct {
+	Count     int   `json:"count"`
+	ElapsedMs int64 `json:"elapsed_ms"`
+}
+
+func runWithTicks(ctx context.Context, duration, interval time.Duration, emit func(phase, name string, fields any)) error {
+	if duration <= 0 {
+		return nil
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	start := time.Now()
+	doneTimer := time.NewTimer(duration)
+	ticker := time.NewTicker(interval)
+	defer doneTimer.Stop()
+	defer ticker.Stop()
+
+	count := 0
+	for {
+		select {
+		case <-ticker.C:
+			count++
+			emit("run", "tick", tickFields{
+				Count:     count,
+				ElapsedMs: time.Since(start).Milliseconds(),
+			})
+		case <-doneTimer.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs := flag.NewFlagSet("mpch", flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // we'll print our own usage/errors
@@ -238,6 +300,7 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs.IntVar(&cfg.Readers, "readers", 0, "Number of reader worker processes (future)")
 	fs.IntVar(&cfg.Writers, "writers", 0, "Number of writer worker processes (future)")
 	fs.DurationVar(&cfg.Duration, "duration", 5*time.Second, "Run duration (print-only for now)")
+	fs.DurationVar(&cfg.TickInterval, "tick-interval", 1*time.Second, "Run tick interval (print-only for now)")
 	fs.Int64Var(&cfg.Seed, "seed", time.Now().UnixNano(), "Seed for deterministic planning (future)")
 	fs.StringVar(&cfg.RunDir, "run-dir", "./runs", "Directory for run artifacts (future)")
 	fs.BoolVar(&cfg.DryRun, "dry-run", true, "If true, perform no side effects (default true for now)")
@@ -272,6 +335,9 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	}
 	if cfg.Duration < 0 {
 		return harnessConfig{}, false, fmt.Errorf("--duration must be >= 0")
+	}
+	if cfg.TickInterval <= 0 {
+		return harnessConfig{}, false, fmt.Errorf("--tick-interval must be > 0")
 	}
 	if cfg.SetupTimeout <= 0 {
 		return harnessConfig{}, false, fmt.Errorf("--setup-timeout must be > 0")
@@ -320,5 +386,10 @@ func newRunID() (string, error) {
 		return "", err
 	}
 	return "run-" + hex.EncodeToString(b[:]), nil
+}
+
+func isBrokenPipe(err error) bool {
+	// We care about the common case: write to a closed pipe.
+	return errors.Is(err, syscall.EPIPE)
 }
 
