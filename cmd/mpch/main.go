@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"encoding/hex"
 	"errors"
@@ -18,6 +19,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	embedded "github.com/dolthub/driver"
 )
 
 type harnessConfig struct {
@@ -36,6 +39,12 @@ type harnessConfig struct {
 	WorkerShutdownGrace time.Duration
 	WorkerShutdownKillWait time.Duration
 	WorkerIgnoreInterrupt bool
+	WorkerMode string
+	WorkerDB string
+	WorkerTable string
+	WorkerOpInterval time.Duration
+	WorkerOpenRetry bool
+	WorkerSQLSession string
 
 	SetupTimeout    time.Duration
 	RunTimeout      time.Duration
@@ -71,6 +80,12 @@ type planFields struct {
 	WorkerShutdownGrace string `json:"worker_shutdown_grace"`
 	WorkerShutdownKillWait string `json:"worker_shutdown_kill_wait"`
 	WorkerIgnoreInterrupt bool `json:"worker_ignore_interrupt"`
+	WorkerMode string `json:"worker_mode"`
+	WorkerDB string `json:"worker_db"`
+	WorkerTable string `json:"worker_table"`
+	WorkerOpInterval string `json:"worker_op_interval"`
+	WorkerOpenRetry bool `json:"worker_open_retry"`
+	WorkerSQLSession string `json:"worker_sql_session"`
 
 	SetupTimeout    string `json:"setup_timeout"`
 	RunTimeout      string `json:"run_timeout"`
@@ -185,6 +200,12 @@ func main() {
 		WorkerShutdownGrace: cfg.WorkerShutdownGrace.String(),
 		WorkerShutdownKillWait: cfg.WorkerShutdownKillWait.String(),
 		WorkerIgnoreInterrupt: cfg.WorkerIgnoreInterrupt,
+		WorkerMode: cfg.WorkerMode,
+		WorkerDB: cfg.WorkerDB,
+		WorkerTable: cfg.WorkerTable,
+		WorkerOpInterval: cfg.WorkerOpInterval.String(),
+		WorkerOpenRetry: cfg.WorkerOpenRetry,
+		WorkerSQLSession: cfg.WorkerSQLSession,
 
 		SetupTimeout:    cfg.SetupTimeout.String(),
 		RunTimeout:      cfg.RunTimeout.String(),
@@ -265,6 +286,12 @@ func main() {
 			WorkerShutdownGrace: cfg.WorkerShutdownGrace.String(),
 			WorkerShutdownKillWait: cfg.WorkerShutdownKillWait.String(),
 			WorkerIgnoreInterrupt: cfg.WorkerIgnoreInterrupt,
+			WorkerMode: cfg.WorkerMode,
+			WorkerDB: cfg.WorkerDB,
+			WorkerTable: cfg.WorkerTable,
+			WorkerOpInterval: cfg.WorkerOpInterval.String(),
+			WorkerOpenRetry: cfg.WorkerOpenRetry,
+			WorkerSQLSession: cfg.WorkerSQLSession,
 
 			SetupTimeout:    cfg.SetupTimeout.String(),
 			RunTimeout:      cfg.RunTimeout.String(),
@@ -333,6 +360,13 @@ func runPhases(ctx context.Context, cfg harnessConfig, runID, runPath string, em
 	manifest := newWorkerManifest(cfg.Seed, cfg.Readers, cfg.Writers)
 
 	setupErr, setupMeta := runPhase(ctx, "setup", cfg.SetupTimeout, emit, func(pctx context.Context) error {
+		if !cfg.DryRun && cfg.WorkerMode == "sql" {
+			if err := ensureSQLSchema(pctx, cfg); err != nil {
+				emit("setup", "sql_schema_error", map[string]any{"error": err.Error()})
+				return err
+			}
+			emit("setup", "sql_schema_ready", map[string]any{"db": cfg.WorkerDB, "table": cfg.WorkerTable})
+		}
 		emit("setup", "manifest", manifest)
 		return sleepWithContext(pctx, cfg.SetupDelay)
 	})
@@ -454,6 +488,48 @@ func runWithTicks(ctx context.Context, duration, interval time.Duration, emit fu
 	}
 }
 
+func runWithTicksOrWorkerExit(
+	ctx context.Context,
+	duration, interval time.Duration,
+	emit func(phase, name string, fields any),
+	exitNotify <-chan workerExit,
+) error {
+	if duration <= 0 {
+		return nil
+	}
+	if interval <= 0 {
+		interval = time.Second
+	}
+
+	start := time.Now()
+	doneTimer := time.NewTimer(duration)
+	ticker := time.NewTicker(interval)
+	defer doneTimer.Stop()
+	defer ticker.Stop()
+
+	count := 0
+	for {
+		select {
+		case we := <-exitNotify:
+			emit("run", "worker_exit_early", we)
+			if we.Error == "" {
+				return fmt.Errorf("worker %s exited early", we.WorkerID)
+			}
+			return fmt.Errorf("worker %s exited early: %s", we.WorkerID, we.Error)
+		case <-ticker.C:
+			count++
+			emit("run", "tick", tickFields{
+				Count:     count,
+				ElapsedMs: time.Since(start).Milliseconds(),
+			})
+		case <-doneTimer.C:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs := flag.NewFlagSet("mpch", flag.ContinueOnError)
 	fs.SetOutput(io.Discard) // we'll print our own usage/errors
@@ -473,6 +549,12 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs.DurationVar(&cfg.WorkerShutdownGrace, "worker-shutdown-grace", 2*time.Second, "How long to wait after SIGINT before escalating to SIGKILL (Phase 5+)")
 	fs.DurationVar(&cfg.WorkerShutdownKillWait, "worker-shutdown-kill-wait", 2*time.Second, "How long to wait after SIGKILL for workers to exit (Phase 5+)")
 	fs.BoolVar(&cfg.WorkerIgnoreInterrupt, "worker-ignore-interrupt", false, "Pass --ignore-interrupt=true to workers (for testing orchestrator kill paths)")
+	fs.StringVar(&cfg.WorkerMode, "worker-mode", "stub", "Worker mode: stub|sql")
+	fs.StringVar(&cfg.WorkerDB, "worker-db", "mpch", "Worker database name (sql mode)")
+	fs.StringVar(&cfg.WorkerTable, "worker-table", "harness_events", "Worker table name (sql mode)")
+	fs.DurationVar(&cfg.WorkerOpInterval, "worker-op-interval", 100*time.Millisecond, "Worker operation interval (sql mode)")
+	fs.BoolVar(&cfg.WorkerOpenRetry, "worker-open-retry", true, "Enable retry on embedded engine open in workers (sql mode)")
+	fs.StringVar(&cfg.WorkerSQLSession, "worker-sql-session", "per_op", "Worker SQL session scope: per_op|per_run (sql mode)")
 
 	fs.DurationVar(&cfg.SetupTimeout, "setup-timeout", 10*time.Second, "Setup phase timeout")
 	fs.DurationVar(&cfg.RunTimeout, "run-timeout", 0, "Run phase timeout (0 = duration + 5s)")
@@ -516,6 +598,23 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	}
 	if cfg.WorkerShutdownKillWait <= 0 {
 		return harnessConfig{}, false, fmt.Errorf("--worker-shutdown-kill-wait must be > 0")
+	}
+	if cfg.WorkerMode != "stub" && cfg.WorkerMode != "sql" {
+		return harnessConfig{}, false, fmt.Errorf("--worker-mode must be stub or sql")
+	}
+	if cfg.WorkerMode == "sql" {
+		if cfg.WorkerDB == "" {
+			return harnessConfig{}, false, fmt.Errorf("--worker-db cannot be empty")
+		}
+		if cfg.WorkerTable == "" {
+			return harnessConfig{}, false, fmt.Errorf("--worker-table cannot be empty")
+		}
+		if cfg.WorkerOpInterval <= 0 {
+			return harnessConfig{}, false, fmt.Errorf("--worker-op-interval must be > 0")
+		}
+		if cfg.WorkerSQLSession != "per_op" && cfg.WorkerSQLSession != "per_run" {
+			return harnessConfig{}, false, fmt.Errorf("--worker-sql-session must be per_op or per_run")
+		}
 	}
 	if cfg.SetupTimeout <= 0 {
 		return harnessConfig{}, false, fmt.Errorf("--setup-timeout must be > 0")
@@ -627,6 +726,46 @@ func prepareRunDir(runDir, runID string, overwrite bool) (string, error) {
 	return runPath, nil
 }
 
+func ensureSQLSchema(ctx context.Context, cfg harnessConfig) error {
+	if cfg.DSN == "" {
+		return fmt.Errorf("--dsn is required for --worker-mode=sql")
+	}
+	if cfg.WorkerDB == "" || cfg.WorkerTable == "" {
+		return fmt.Errorf("worker db/table cannot be empty")
+	}
+
+	ecfg, err := embedded.ParseDSN(cfg.DSN)
+	if err != nil {
+		return err
+	}
+	// Avoid selecting DB before it exists.
+	ecfg.Database = ""
+
+	connector, err := embedded.NewConnector(ecfg)
+	if err != nil {
+		return err
+	}
+	defer connector.Close()
+
+	db := sql.OpenDB(connector)
+	defer db.Close()
+
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", cfg.WorkerDB)); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("USE %s", cfg.WorkerDB)); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf(
+		"CREATE TABLE IF NOT EXISTS %s (id BIGINT PRIMARY KEY AUTO_INCREMENT, worker_id VARCHAR(64), ts BIGINT)",
+		cfg.WorkerTable,
+	)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 type workerProc struct {
 	spec workerSpec
 	cmd  *exec.Cmd
@@ -635,7 +774,29 @@ type workerProc struct {
 	workerDir string
 
 	readyCh chan struct{}
-	exitCh  chan error
+	doneCh chan struct{}
+
+	mu      sync.Mutex
+	waitErr error
+}
+
+type workerLaunchArgs struct {
+	Mode       string
+	DSN        string
+	DB         string
+	Table      string
+	OpInterval time.Duration
+	OpenRetry  bool
+	SQLSession string
+
+	Heartbeat       time.Duration
+	IgnoreInterrupt bool
+}
+
+type workerExit struct {
+	WorkerID string     `json:"worker_id"`
+	Role     workerRole `json:"role"`
+	Error    string     `json:"error,omitempty"`
 }
 
 type workerTermination struct {
@@ -672,7 +833,17 @@ func runWorkersAndTicks(
 	}()
 
 	for _, w := range manifest.Workers {
-		p, err := startWorker(ctx, workerBin, runID, runPath, w, cfg.WorkerHeartbeatInterval, cfg.WorkerIgnoreInterrupt, emit)
+		p, err := startWorker(ctx, workerBin, runID, runPath, w, workerLaunchArgs{
+			Mode:            cfg.WorkerMode,
+			DSN:             cfg.DSN,
+			DB:              cfg.WorkerDB,
+			Table:           cfg.WorkerTable,
+			OpInterval:      cfg.WorkerOpInterval,
+			OpenRetry:       cfg.WorkerOpenRetry,
+			SQLSession:      cfg.WorkerSQLSession,
+			Heartbeat:       cfg.WorkerHeartbeatInterval,
+			IgnoreInterrupt: cfg.WorkerIgnoreInterrupt,
+		}, emit)
 		if err != nil {
 			return err
 		}
@@ -684,7 +855,8 @@ func runWorkersAndTicks(
 	for _, p := range procs {
 		select {
 		case <-p.readyCh:
-		case err := <-p.exitCh:
+		case <-p.doneCh:
+			err := workerWaitErr(p)
 			if err == nil {
 				return fmt.Errorf("worker %s exited before ready", p.spec.ID)
 			}
@@ -703,8 +875,23 @@ func runWorkersAndTicks(
 	}
 	emit("run", "all_started", map[string]any{"count": len(procs)})
 
-	// Run ticks for duration (or until cancel).
-	runErr := runWithTicks(ctx, cfg.Duration, cfg.TickInterval, emit)
+	// Watch for workers exiting early.
+	exitNotify := make(chan workerExit, len(procs))
+	for _, p := range procs {
+		pp := p
+		go func() {
+			<-pp.doneCh
+			err := workerWaitErr(pp)
+			we := workerExit{WorkerID: pp.spec.ID, Role: pp.spec.Role}
+			if err != nil {
+				we.Error = err.Error()
+			}
+			exitNotify <- we
+		}()
+	}
+
+	// Run ticks for duration (or until cancel), failing fast on worker exit.
+	runErr := runWithTicksOrWorkerExit(ctx, cfg.Duration, cfg.TickInterval, emit, exitNotify)
 	// cleanup() will stop workers.
 	return runErr
 }
@@ -715,8 +902,7 @@ func startWorker(
 	runID string,
 	runPath string,
 	spec workerSpec,
-	heartbeat time.Duration,
-	ignoreInterrupt bool,
+	args workerLaunchArgs,
 	emit func(phase, name string, fields any),
 ) (*workerProc, error) {
 	workerDir := filepath.Join(runPath, "workers", spec.ID)
@@ -724,18 +910,25 @@ func startWorker(
 		return nil, err
 	}
 
-	args := []string{
+	argv := []string{
 		"--run-id", runID,
 		"--worker-id", spec.ID,
 		"--role", string(spec.Role),
-		"--heartbeat-interval", heartbeat.String(),
+		"--heartbeat-interval", args.Heartbeat.String(),
 		"--wait-for-start=true",
+		"--mode", args.Mode,
+		"--dsn", args.DSN,
+		"--db", args.DB,
+		"--table", args.Table,
+		"--op-interval", args.OpInterval.String(),
+		"--open-retry=" + fmt.Sprintf("%t", args.OpenRetry),
+		"--sql-session", args.SQLSession,
 	}
-	if ignoreInterrupt {
-		args = append(args, "--ignore-interrupt=true")
+	if args.IgnoreInterrupt {
+		argv = append(argv, "--ignore-interrupt=true")
 	}
 
-	cmd := exec.CommandContext(ctx, workerBin, args...)
+	cmd := exec.CommandContext(ctx, workerBin, argv...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -766,7 +959,7 @@ func startWorker(
 		stdin:   stdin,
 		workerDir: workerDir,
 		readyCh: make(chan struct{}),
-		exitCh:  make(chan error, 1),
+		doneCh:  make(chan struct{}),
 	}
 
 	go func() {
@@ -810,10 +1003,22 @@ func startWorker(
 
 	go func() {
 		err := cmd.Wait()
-		p.exitCh <- err
+		p.mu.Lock()
+		p.waitErr = err
+		p.mu.Unlock()
+		close(p.doneCh)
 	}()
 
 	return p, nil
+}
+
+func workerWaitErr(p *workerProc) error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.waitErr
 }
 
 func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit func(phase, name string, fields any)) error {
@@ -839,7 +1044,7 @@ func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit fu
 	deadline := time.NewTimer(grace)
 	defer deadline.Stop()
 
-	done := make(map[*workerProc]error, len(procs))
+	done := make(map[*workerProc]struct{}, len(procs))
 	for len(done) < len(procs) {
 		progress := false
 		for _, p := range procs {
@@ -847,8 +1052,8 @@ func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit fu
 				continue
 			}
 			select {
-			case err := <-p.exitCh:
-				done[p] = err
+			case <-p.doneCh:
+				done[p] = struct{}{}
 				progress = true
 			default:
 			}
@@ -856,7 +1061,6 @@ func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit fu
 		if progress {
 			continue
 		}
-
 		select {
 		case <-deadline.C:
 			goto KILL
@@ -866,7 +1070,8 @@ func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit fu
 	}
 
 	emit("run", "workers_exited", map[string]any{"count": len(procs), "killed": 0})
-	for p, err := range done {
+	for p := range done {
+		err := workerWaitErr(p)
 		_ = writeTermination(p, workerTermination{
 			TS: time.Now().UTC(),
 			WorkerID: p.spec.ID,
@@ -906,8 +1111,8 @@ KILL:
 				continue
 			}
 			select {
-			case err := <-p.exitCh:
-				done[p] = err
+			case <-p.doneCh:
+				done[p] = struct{}{}
 				progress = true
 			default:
 			}
@@ -939,7 +1144,7 @@ KILL:
 
 	emit("run", "workers_exited", map[string]any{"count": len(procs), "killed": killed})
 	for _, p := range procs {
-		err := done[p]
+		err := workerWaitErr(p)
 		term := workerTermination{
 			TS: time.Now().UTC(),
 			WorkerID: p.spec.ID,
