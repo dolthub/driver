@@ -62,6 +62,10 @@ func TestRunPhases_RunFailureStillAttemptsTeardown(t *testing.T) {
 
 	var events []string
 	emit := func(phase, name string, _ any) {
+		// Ignore auxiliary events; this test only cares about phase start/end ordering.
+		if name != "phase_start" && name != "phase_end" {
+			return
+		}
 		events = append(events, phase+":"+name)
 	}
 
@@ -174,6 +178,36 @@ func TestRunWithTicks_MonotonicAndBounded(t *testing.T) {
 		if ticks[i].Count != want {
 			t.Fatalf("non-monotonic count at i=%d: got %d want %d; ticks=%v", i, ticks[i].Count, want, ticks)
 		}
+	}
+}
+
+func TestWorkerManifest_DeterministicIDs(t *testing.T) {
+	t.Parallel()
+
+	m1 := newWorkerManifest(123, 2, 1)
+	m2 := newWorkerManifest(123, 2, 1)
+	if len(m1.Workers) != 3 {
+		t.Fatalf("unexpected worker count: %d", len(m1.Workers))
+	}
+	for i := range m1.Workers {
+		if m1.Workers[i].ID != m2.Workers[i].ID {
+			t.Fatalf("non-deterministic id at %d: %q vs %q", i, m1.Workers[i].ID, m2.Workers[i].ID)
+		}
+		if m1.Workers[i].Role != m2.Workers[i].Role || m1.Workers[i].Index != m2.Workers[i].Index {
+			t.Fatalf("non-deterministic worker spec at %d", i)
+		}
+	}
+
+	m3 := newWorkerManifest(124, 2, 1)
+	// With a different seed, at least one ID should differ.
+	same := 0
+	for i := range m1.Workers {
+		if m1.Workers[i].ID == m3.Workers[i].ID {
+			same++
+		}
+	}
+	if same == len(m1.Workers) {
+		t.Fatalf("expected ids to vary with seed; m1=%v m3=%v", m1.Workers, m3.Workers)
 	}
 }
 

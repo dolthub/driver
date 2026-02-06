@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/json"
 	"encoding/hex"
 	"errors"
@@ -84,6 +85,31 @@ type runMeta struct {
 	Phases map[string]phaseMeta `json:"phases"`
 
 	ExitCode int `json:"exit_code"`
+}
+
+type workerRole string
+
+const (
+	roleReader workerRole = "reader"
+	roleWriter workerRole = "writer"
+)
+
+type workerSpec struct {
+	ID    string     `json:"id"`
+	Role  workerRole `json:"role"`
+	Index int        `json:"index"`
+
+	// Reserved for Phase 5+.
+	Args []string          `json:"args,omitempty"`
+	Env  map[string]string `json:"env,omitempty"`
+}
+
+type workerManifest struct {
+	Seed    int64 `json:"seed"`
+	Readers int   `json:"readers"`
+	Writers int   `json:"writers"`
+
+	Workers []workerSpec `json:"workers"`
 }
 
 func main() {
@@ -225,6 +251,14 @@ func main() {
 		} else {
 			emit("artifacts", "meta_written", map[string]any{"path": filepath.Join(cfg.RunDir, runID, "meta.json")})
 		}
+
+		manifest := newWorkerManifest(cfg.Seed, cfg.Readers, cfg.Writers)
+		if err := writeManifest(cfg.RunDir, runID, manifest); err != nil {
+			emit("artifacts", "manifest_write_error", map[string]any{"error": err.Error()})
+			code = 1
+		} else {
+			emit("artifacts", "manifest_written", map[string]any{"path": filepath.Join(cfg.RunDir, runID, "manifest.json")})
+		}
 	} else {
 		emit("artifacts", "skipped", map[string]any{"reason": "dry_run"})
 	}
@@ -263,6 +297,7 @@ func runPhases(ctx context.Context, cfg harnessConfig, emit func(phase, name str
 	phases := map[string]phaseMeta{}
 
 	setupErr, setupMeta := runPhase(ctx, "setup", cfg.SetupTimeout, emit, func(pctx context.Context) error {
+		emit("setup", "manifest", newWorkerManifest(cfg.Seed, cfg.Readers, cfg.Writers))
 		return sleepWithContext(pctx, cfg.SetupDelay)
 	})
 	phases["setup"] = setupMeta
@@ -524,5 +559,47 @@ func validateRunID(id string) error {
 		}
 	}
 	return nil
+}
+
+func writeManifest(runDir, runID string, manifest workerManifest) error {
+	dir := filepath.Join(runDir, runID)
+	b, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	return os.WriteFile(filepath.Join(dir, "manifest.json"), b, 0o644)
+}
+
+func newWorkerManifest(seed int64, readers, writers int) workerManifest {
+	workers := make([]workerSpec, 0, readers+writers)
+
+	for i := 0; i < writers; i++ {
+		workers = append(workers, workerSpec{
+			ID:    workerID(seed, roleWriter, i),
+			Role:  roleWriter,
+			Index: i,
+		})
+	}
+	for i := 0; i < readers; i++ {
+		workers = append(workers, workerSpec{
+			ID:    workerID(seed, roleReader, i),
+			Role:  roleReader,
+			Index: i,
+		})
+	}
+
+	return workerManifest{
+		Seed:    seed,
+		Readers: readers,
+		Writers: writers,
+		Workers: workers,
+	}
+}
+
+func workerID(seed int64, role workerRole, index int) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d|%s|%d", seed, role, index)))
+	// Short but stable. Enough uniqueness for a single manifest.
+	return fmt.Sprintf("%s-%s", string(role)[0:1], hex.EncodeToString(sum[:4]))
 }
 

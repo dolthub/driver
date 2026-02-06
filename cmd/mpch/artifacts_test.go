@@ -50,3 +50,24 @@ func TestValidateRunID_AllowsSafeCharacters(t *testing.T) {
 	}
 }
 
+func TestWriteManifest_WritesFile(t *testing.T) {
+	t.Parallel()
+
+	runDir := t.TempDir()
+	runID := "testrun_2"
+
+	// Create run dir as writeManifest expects it to exist after meta write.
+	if err := os.MkdirAll(filepath.Join(runDir, runID), 0o755); err != nil {
+		t.Fatalf("mkdir failed: %v", err)
+	}
+
+	manifest := newWorkerManifest(123, 2, 1)
+	if err := writeManifest(runDir, runID, manifest); err != nil {
+		t.Fatalf("writeManifest failed: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(runDir, runID, "manifest.json")); err != nil {
+		t.Fatalf("expected manifest.json to exist: %v", err)
+	}
+}
+
