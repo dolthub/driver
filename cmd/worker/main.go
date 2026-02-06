@@ -5,11 +5,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -45,6 +47,12 @@ type event struct {
 
 	Event  string `json:"event"`
 	Fields any    `json:"fields,omitempty"`
+}
+
+type errInfo struct {
+	Kind      string `json:"kind"`      // lock|timeout|sql|other
+	Retryable bool   `json:"retryable"` // whether we will/should retry within op timeout
+	Message   string `json:"message"`
 }
 
 func main() {
@@ -96,6 +104,10 @@ func main() {
 		"duration":           cfg.Duration.String(),
 		"wait_for_start":     cfg.WaitForStart,
 		"mode":               cfg.Mode,
+		"sql_session":        cfg.SQLSession,
+		"op_interval":        cfg.OpInterval.String(),
+		"op_timeout":         cfg.OpTimeout.String(),
+		"open_retry":         cfg.OpenRetry,
 	})
 
 	if cfg.WaitForStart {
@@ -242,31 +254,26 @@ func runSQL(ctx context.Context, cfg config, emit func(name string, fields any))
 		defer closeDB()
 	}
 
+	opID := int64(0)
 	for {
 		select {
 		case <-op.C:
+			opID++
 			var err error
 			if cfg.SQLSession == "per_op" {
 				opCtx, cancel := context.WithTimeout(ctx, cfg.OpTimeout)
-				d, closer, oerr := openDB(opCtx, cfg)
-				if oerr != nil {
-					err = oerr
-				} else {
-					err = doOneOp(opCtx, d, cfg)
-				}
-				if closer != nil {
-					closer()
-				}
+				err = doOneOpWithRetry(opCtx, cfg, opID, emit)
 				cancel()
 			} else {
 				opCtx, cancel := context.WithTimeout(ctx, cfg.OpTimeout)
-				err = doOneOp(opCtx, db, cfg)
+				err = doOneOpWithRetryWithDB(opCtx, db, cfg, opID, emit)
 				cancel()
 			}
 			if err != nil {
 				s.opsErr++
 				s.lastErr = err.Error()
-				emit("op_error", map[string]any{"error": err.Error()})
+				ei := classifyErr(err)
+				emit("op_error", map[string]any{"op_id": opID, "error": ei})
 			} else {
 				s.opsOK++
 			}
@@ -282,6 +289,90 @@ func runSQL(ctx context.Context, cfg config, emit func(name string, fields any))
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}
+}
+
+func doOneOpWithRetry(opCtx context.Context, cfg config, opID int64, emit func(name string, fields any)) error {
+	start := time.Now()
+	attempt := 0
+	backoffDelay := 5 * time.Millisecond
+	for {
+		attempt++
+		d, closer, err := openDB(opCtx, cfg)
+		if err != nil {
+			ei := classifyErr(err)
+			if cfg.OpenRetry && ei.Retryable && opCtx.Err() == nil {
+				emit("open_retry", map[string]any{
+					"op_id":       opID,
+					"attempt":     attempt,
+					"elapsed_ms":  time.Since(start).Milliseconds(),
+					"backoff_ms":  backoffDelay.Milliseconds(),
+					"last_error":  ei,
+				})
+				sleepWithCtx(opCtx, backoffDelay)
+				backoffDelay = minDur(backoffDelay*2, 200*time.Millisecond)
+				continue
+			}
+			return err
+		}
+
+		err = doOneOp(opCtx, d, cfg)
+		closer()
+		if err == nil {
+			emit("op_ok", map[string]any{
+				"op_id":      opID,
+				"attempt":    attempt,
+				"elapsed_ms": time.Since(start).Milliseconds(),
+			})
+			return nil
+		}
+
+		ei := classifyErr(err)
+		if ei.Retryable && opCtx.Err() == nil {
+			emit("op_retry", map[string]any{
+				"op_id":       opID,
+				"attempt":     attempt,
+				"elapsed_ms":  time.Since(start).Milliseconds(),
+				"backoff_ms":  backoffDelay.Milliseconds(),
+				"last_error":  ei,
+			})
+			sleepWithCtx(opCtx, backoffDelay)
+			backoffDelay = minDur(backoffDelay*2, 200*time.Millisecond)
+			continue
+		}
+		return err
+	}
+}
+
+func doOneOpWithRetryWithDB(opCtx context.Context, db *sql.DB, cfg config, opID int64, emit func(name string, fields any)) error {
+	start := time.Now()
+	attempt := 0
+	backoffDelay := 5 * time.Millisecond
+	for {
+		attempt++
+		err := doOneOp(opCtx, db, cfg)
+		if err == nil {
+			emit("op_ok", map[string]any{
+				"op_id":      opID,
+				"attempt":    attempt,
+				"elapsed_ms": time.Since(start).Milliseconds(),
+			})
+			return nil
+		}
+		ei := classifyErr(err)
+		if ei.Retryable && opCtx.Err() == nil {
+			emit("op_retry", map[string]any{
+				"op_id":       opID,
+				"attempt":     attempt,
+				"elapsed_ms":  time.Since(start).Milliseconds(),
+				"backoff_ms":  backoffDelay.Milliseconds(),
+				"last_error":  ei,
+			})
+			sleepWithCtx(opCtx, backoffDelay)
+			backoffDelay = minDur(backoffDelay*2, 200*time.Millisecond)
+			continue
+		}
+		return err
 	}
 }
 
@@ -353,6 +444,50 @@ func ident(s string) string {
 		}
 	}
 	return s
+}
+
+func classifyErr(err error) errInfo {
+	if err == nil {
+		return errInfo{Kind: "other", Retryable: false, Message: ""}
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return errInfo{Kind: "timeout", Retryable: true, Message: err.Error()}
+	}
+	msg := err.Error()
+	l := strings.ToLower(msg)
+
+	// Embedded dolt frequently surfaces these strings for process-level lock contention.
+	if strings.Contains(l, "database is locked") ||
+		strings.Contains(l, "locked by another dolt process") ||
+		strings.Contains(l, "cannot update manifest: database is read only") {
+		return errInfo{Kind: "lock", Retryable: true, Message: msg}
+	}
+
+	// SQL-ish errors (not necessarily retryable).
+	if strings.Contains(l, "error ") || strings.Contains(l, "sql") {
+		return errInfo{Kind: "sql", Retryable: false, Message: msg}
+	}
+
+	return errInfo{Kind: "other", Retryable: false, Message: msg}
+}
+
+func sleepWithCtx(ctx context.Context, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
+func minDur(a, b time.Duration) time.Duration {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func parseArgs(args []string) (cfg config, showHelp bool, _ error) {

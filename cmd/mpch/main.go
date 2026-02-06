@@ -16,6 +16,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"os/exec"
+	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -47,6 +49,9 @@ type harnessConfig struct {
 	WorkerOpenRetry bool
 	WorkerSQLSession string
 	WorkerOpTimeout time.Duration
+
+	DiagnosticsTailLines int
+	DumpStacksOnTimeout  bool
 
 	SetupTimeout    time.Duration
 	RunTimeout      time.Duration
@@ -89,6 +94,9 @@ type planFields struct {
 	WorkerOpenRetry bool `json:"worker_open_retry"`
 	WorkerSQLSession string `json:"worker_sql_session"`
 	WorkerOpTimeout string `json:"worker_op_timeout"`
+
+	DiagnosticsTailLines int  `json:"diagnostics_tail_lines"`
+	DumpStacksOnTimeout  bool `json:"dump_stacks_on_timeout"`
 
 	SetupTimeout    string `json:"setup_timeout"`
 	RunTimeout      string `json:"run_timeout"`
@@ -210,6 +218,8 @@ func main() {
 		WorkerOpenRetry: cfg.WorkerOpenRetry,
 		WorkerSQLSession: cfg.WorkerSQLSession,
 		WorkerOpTimeout: cfg.WorkerOpTimeout.String(),
+		DiagnosticsTailLines: cfg.DiagnosticsTailLines,
+		DumpStacksOnTimeout:  cfg.DumpStacksOnTimeout,
 
 		SetupTimeout:    cfg.SetupTimeout.String(),
 		RunTimeout:      cfg.RunTimeout.String(),
@@ -297,6 +307,8 @@ func main() {
 			WorkerOpenRetry: cfg.WorkerOpenRetry,
 			WorkerSQLSession: cfg.WorkerSQLSession,
 			WorkerOpTimeout: cfg.WorkerOpTimeout.String(),
+			DiagnosticsTailLines: cfg.DiagnosticsTailLines,
+			DumpStacksOnTimeout:  cfg.DumpStacksOnTimeout,
 
 			SetupTimeout:    cfg.SetupTimeout.String(),
 			RunTimeout:      cfg.RunTimeout.String(),
@@ -325,6 +337,14 @@ func main() {
 			code = 1
 		} else {
 			emit("artifacts", "manifest_written", map[string]any{"path": filepath.Join(runPath, "manifest.json")})
+		}
+
+		if isTimeoutLike(phases, meta.ExitCode) {
+			if err := writeTimeoutDiagnostics(runPath, manifest, cfg.DiagnosticsTailLines, cfg.DumpStacksOnTimeout); err != nil {
+				emit("artifacts", "diagnostics_write_error", map[string]any{"error": err.Error()})
+			} else {
+				emit("artifacts", "diagnostics_written", map[string]any{"path": filepath.Join(runPath, "diagnostics")})
+			}
 		}
 	} else {
 		emit("artifacts", "skipped", map[string]any{"reason": "dry_run"})
@@ -561,6 +581,8 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 	fs.BoolVar(&cfg.WorkerOpenRetry, "worker-open-retry", true, "Enable retry on embedded engine open in workers (sql mode)")
 	fs.StringVar(&cfg.WorkerSQLSession, "worker-sql-session", "per_op", "Worker SQL session scope: per_op|per_run (sql mode)")
 	fs.DurationVar(&cfg.WorkerOpTimeout, "worker-op-timeout", 500*time.Millisecond, "Worker timeout per operation (sql mode)")
+	fs.IntVar(&cfg.DiagnosticsTailLines, "diagnostics-tail-lines", 200, "On timeouts, write last N lines of worker logs to diagnostics/")
+	fs.BoolVar(&cfg.DumpStacksOnTimeout, "dump-stacks-on-timeout", true, "On timeouts, write mpch stack dump to diagnostics/")
 
 	fs.DurationVar(&cfg.SetupTimeout, "setup-timeout", 10*time.Second, "Setup phase timeout")
 	fs.DurationVar(&cfg.RunTimeout, "run-timeout", 0, "Run phase timeout (0 = duration + 5s)")
@@ -624,6 +646,9 @@ func parseArgs(args []string) (cfg harnessConfig, showHelp bool, _ error) {
 		if cfg.WorkerSQLSession != "per_op" && cfg.WorkerSQLSession != "per_run" {
 			return harnessConfig{}, false, fmt.Errorf("--worker-sql-session must be per_op or per_run")
 		}
+	}
+	if cfg.DiagnosticsTailLines < 0 {
+		return harnessConfig{}, false, fmt.Errorf("--diagnostics-tail-lines must be >= 0")
 	}
 	if cfg.SetupTimeout <= 0 {
 		return harnessConfig{}, false, fmt.Errorf("--setup-timeout must be > 0")
@@ -1034,6 +1059,114 @@ func workerWaitErr(p *workerProc) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.waitErr
+}
+
+func isTimeoutLike(phases map[string]phaseMeta, exitCode int) bool {
+	// Only attempt diagnostics on failing runs.
+	if exitCode == 0 {
+		return false
+	}
+	for _, pm := range phases {
+		if isTimeoutErrString(pm.Error) {
+			return true
+		}
+	}
+	return false
+}
+
+func isTimeoutErrString(s string) bool {
+	if s == "" {
+		return false
+	}
+	l := strings.ToLower(s)
+	return strings.Contains(l, "deadline exceeded") ||
+		strings.Contains(l, "timeout waiting") ||
+		strings.Contains(l, "context deadline")
+}
+
+func writeTimeoutDiagnostics(runPath string, manifest workerManifest, tailLines int, dumpStacks bool) error {
+	diagDir := filepath.Join(runPath, "diagnostics")
+	if err := os.MkdirAll(diagDir, 0o755); err != nil {
+		return err
+	}
+
+	if dumpStacks {
+		// Bound the stack dump size.
+		buf := make([]byte, 1<<20) // 1 MiB
+		n := runtime.Stack(buf, true)
+		if err := os.WriteFile(filepath.Join(diagDir, "mpch_stacks.txt"), buf[:n], 0o644); err != nil {
+			return err
+		}
+	}
+
+	if tailLines <= 0 {
+		return nil
+	}
+
+	workersOut := filepath.Join(diagDir, "workers")
+	if err := os.MkdirAll(workersOut, 0o755); err != nil {
+		return err
+	}
+
+	for _, w := range manifest.Workers {
+		srcDir := filepath.Join(runPath, "workers", w.ID)
+		dstDir := filepath.Join(workersOut, w.ID)
+		if err := os.MkdirAll(dstDir, 0o755); err != nil {
+			return err
+		}
+
+		_ = tailFile(filepath.Join(srcDir, "stdout.jsonl"), filepath.Join(dstDir, "stdout_tail.jsonl"), tailLines)
+		_ = tailFile(filepath.Join(srcDir, "stderr.log"), filepath.Join(dstDir, "stderr_tail.log"), tailLines)
+
+		if b, err := os.ReadFile(filepath.Join(srcDir, "termination.json")); err == nil {
+			_ = os.WriteFile(filepath.Join(dstDir, "termination.json"), b, 0o644)
+		}
+	}
+
+	return nil
+}
+
+func tailFile(src, dst string, n int) error {
+	if n <= 0 {
+		return nil
+	}
+	f, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	type ringBuf struct {
+		buf   []string
+		next  int
+		count int
+	}
+	r := ringBuf{buf: make([]string, n)}
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		r.buf[r.next] = sc.Text()
+		r.next = (r.next + 1) % n
+		if r.count < n {
+			r.count++
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return err
+	}
+
+	var out strings.Builder
+	start := 0
+	if r.count == n {
+		start = r.next
+	}
+	for i := 0; i < r.count; i++ {
+		idx := (start + i) % n
+		out.WriteString(r.buf[idx])
+		out.WriteString("\n")
+	}
+
+	return os.WriteFile(dst, []byte(out.String()), 0o644)
 }
 
 func shutdownWorkers(procs []*workerProc, grace, killWait time.Duration, emit func(phase, name string, fields any)) error {
