@@ -294,8 +294,7 @@ func init() {
 	}
 }
 
-// emitUsageEvent emits a usage event to the event server, then one every 24 hours the process is alive.
-// This happens once per process.
+// emitUsageEvent emits a usage event to the event server at most once every 24 hours.
 func emitUsageEvent(ctx context.Context, mrEnv *env.MultiRepoEnv) {
 	defer func() {
 		recover()
