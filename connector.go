@@ -1,3 +1,17 @@
+// Copyright 2026 Dolthub, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package embedded
 
 import (
@@ -5,13 +19,22 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/cenkalti/backoff/v4"
+	"github.com/dolthub/dolt/go/cmd/dolt/commands"
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
+	"github.com/dolthub/dolt/go/cmd/dolt/doltversion"
 	"github.com/dolthub/dolt/go/libraries/doltcore/dbfactory"
+	"github.com/dolthub/dolt/go/libraries/doltcore/env"
+	"github.com/dolthub/dolt/go/libraries/events"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
+	eventsapi "github.com/dolthub/eventsapi_schema/dolt/services/eventsapi/v1alpha1"
 	gmssql "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/vitess/go/mysql"
 )
@@ -256,4 +279,87 @@ func (c *Connector) openEngineWithRetry(ctx context.Context) (*engine.SqlEngine,
 		return nil, err
 	}
 	return se, nil
+}
+
+// Two tracking vars to ensure we only emit metrics once per process, and that we don't emit if the env var is set.
+// These are atomic bools to avoid races in test, or when there are multiple connectors in the same process.
+var metricsDisabled = &atomic.Bool{}
+var metricsSent = &atomic.Bool{}
+
+const metricsDisabledEnvKey = "DOLT_METRICS_DISABLED"
+
+func init() {
+	if _, disabled := os.LookupEnv(metricsDisabledEnvKey); disabled {
+		metricsDisabled.Store(true)
+	}
+}
+
+// emitUsageEvent emits a usage event to the event server at most once every 24 hours.
+func emitUsageEvent(ctx context.Context, mrEnv *env.MultiRepoEnv) {
+	defer func() {
+		recover()
+	}()
+
+	if metricsDisabled.Load() || !metricsSent.CompareAndSwap(false, true) {
+		return
+	}
+
+	var dEnv *env.DoltEnv
+	mrEnv.Iter(func(name string, d *env.DoltEnv) (stop bool, err error) {
+		dEnv = d
+		return true, nil
+	})
+
+	// no dolt db created yet, which means we can't create a GRPC dialer
+	if dEnv == nil {
+		return
+	}
+
+	dir, err := dEnv.TempTableFilesDir()
+	if err != nil {
+		return
+	}
+
+	mtimeFile, tooSoon := tooSoonToEmitMetrics(dir)
+	if tooSoon {
+		return
+	}
+
+	emitter, closeFunc, err := commands.GRPCEmitterForConfig(dEnv, events.WithApplication(eventsapi.AppID_APP_DOLT_EMBEDDED))
+	if err != nil {
+		return
+	}
+	defer closeFunc()
+
+	evt := events.NewEvent(eventsapi.ClientEventType_SQL_SERVER)
+	evtCollector := events.NewCollector(doltversion.Version, emitter)
+	evtCollector.CloseEventAndAdd(evt)
+	clientEvents := evtCollector.Close()
+	_ = emitter.LogEvents(ctx, doltversion.Version, clientEvents)
+
+	// update the last modified time
+	_ = os.Chtimes(mtimeFile, time.Now(), time.Now())
+}
+
+const metricsInterval = time.Hour * 24
+
+// tooSoonToEmitMetrics checks if it's been less than 24 hours since the last metrics event was emitted, by checking
+// the mod time of a file in the given directory.
+// Returns the path to the file used for tracking mod time, and whether it's too soon to emit metrics.
+func tooSoonToEmitMetrics(dir string) (string, bool) {
+	mtimeFile := filepath.Join(dir, "dolt_embedded_metrics")
+	f, err := os.OpenFile(mtimeFile, os.O_CREATE, 0644)
+	if err != nil {
+		return "", true
+	}
+
+	info, err := f.Stat()
+	if err != nil {
+		return "", true
+	}
+
+	if time.Now().Sub(info.ModTime()) < metricsInterval {
+		return "", true
+	}
+	return mtimeFile, false
 }
