@@ -4,7 +4,7 @@ go 1.25.6
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260212205045-9d23b3b21e11
+	github.com/dolthub/dolt/go v0.40.5-0.20260212212738-d30063bf6a87
 	github.com/dolthub/eventsapi_schema v0.0.0-20260205214132-a7a3c84c84a1
 	github.com/dolthub/go-mysql-server v0.20.1-0.20260212200850-d6f567de11ad
 	github.com/dolthub/vitess v0.0.0-20260202234501-b14ed9b1632b
