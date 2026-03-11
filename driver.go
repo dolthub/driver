@@ -61,18 +61,8 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	if openSqlEngineForConnector != nil {
 		return openSqlEngineForConnector(ctx, cfg, fs, dir, version, seCfg)
 	}
-<<<<<<< fix-relative-paths
-
-	cfg := config.NewMapConfig(map[string]string{
-		config.UserNameKey:  name[0],
-		config.UserEmailKey: email[0],
-	})
-
-	// fs already switched to ds.Directory, so passing "." as a path
-	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", "0.40.17")
-=======
-	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, dir, version)
->>>>>>> main
+	// fs already switched to dir, so passing "." as a path
+	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", version)
 	if err != nil {
 		return nil, err
 	}
