@@ -61,7 +61,8 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	if openSqlEngineForConnector != nil {
 		return openSqlEngineForConnector(ctx, cfg, fs, dir, version, seCfg)
 	}
-	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, dir, version)
+	// fs already switched to dir, so passing "." as a path
+	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", version)
 	if err != nil {
 		return nil, err
 	}
