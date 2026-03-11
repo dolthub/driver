@@ -1,0 +1,347 @@
+name: Bump Deps
+
+on:
+  repository_dispatch:
+    types: [ bump-dependency ]
+
+concurrency:
+  group: bump-dependency-${{ github.event.client_payload.dependency }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  checks: read
+
+jobs:
+  sanitize-payload:
+    name: Sanitize Payload
+    runs-on: ubuntu-22.04
+    outputs:
+      safe_dep: ${{ steps.sanitize.outputs.safe_dep }}
+      safe_label: ${{ steps.sanitize.outputs.safe_label }}
+      safe_module: ${{ steps.sanitize.outputs.safe_module }}
+      safe_head: ${{ steps.sanitize.outputs.safe_head }}
+      safe_short: ${{ steps.sanitize.outputs.safe_short }}
+      safe_assignee: ${{ steps.sanitize.outputs.safe_assignee }}
+      safe_email: ${{ steps.sanitize.outputs.safe_email }}
+      safe_branch: ${{ steps.sanitize.outputs.safe_branch }}
+    steps:
+      - name: Validate & Sanitize Payload
+        id: sanitize
+        env:
+          RAW_DEP: ${{ github.event.client_payload.dependency }}
+          RAW_SHA: ${{ github.event.client_payload.head_commit_sha }}
+          RAW_USER: ${{ github.event.client_payload.assignee }}
+          RAW_MAIL: ${{ github.event.client_payload.assignee_email }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          IFS=$'\n\t'
+
+          dep="${RAW_DEP:-}"
+          sha="${RAW_SHA:-}"
+          user="${RAW_USER:-}"
+          mail="${RAW_MAIL:-}"
+
+          # Only allow dependencies we explicitly know how to bump in this repo.
+          case "${dep}" in
+            dolt)
+              module="github.com/dolthub/dolt/go"
+              label="dolt-bump"
+              ;;
+            *)
+              echo "Unsupported dependency '${dep}'" >&2
+              exit 1
+              ;;
+          esac
+
+          # Allow only hex SHAs or safe tag-ish: letters, digits, dot, dash, underscore, plus.
+          if [ -z "${sha}" ] || ! printf '%s' "${sha}" | grep -qE '^[A-Za-z0-9._+-]+$'; then
+            echo "Invalid head_commit_sha" >&2
+            exit 1
+          fi
+
+          if printf '%s' "${sha}" | grep -qiE '^[0-9a-f]{40}$'; then
+            short="${sha:0:8}"
+          else
+            short="$(printf '%s' "${sha}" | tr -cd 'A-Za-z0-9._+-' | cut -c1-12)"
+          fi
+
+          # Normalize bot user to a real GitHub username for branch/assignee.
+          if [ "${user}" = "github-actions[bot]" ] || [ -z "${user}" ]; then
+            user="coffeegoddd"
+          fi
+
+          # GitHub username subset.
+          if ! printf '%s' "${user}" | grep -qE '^[A-Za-z0-9-]{1,39}$'; then
+            user="coffeegoddd"
+          fi
+
+          # Validate email; if invalid, fall back to GitHub noreply.
+          if [ -n "${mail}" ] && printf '%s' "${mail}" | grep -qE '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'; then
+            safe_email="${mail}"
+          else
+            safe_email="${user}+noreply@users.noreply.github.com"
+          fi
+
+          branch="bump-${dep}-${short}"
+
+          {
+            echo "safe_dep=${dep}"
+            echo "safe_label=${label}"
+            echo "safe_module=${module}"
+            echo "safe_head=${sha}"
+            echo "safe_short=${short}"
+            echo "safe_assignee=${user}"
+            echo "safe_email=${safe_email}"
+            echo "safe_branch=${branch}"
+          } >> "${GITHUB_OUTPUT}"
+
+  stale-bump-prs:
+    name: Retrieve stale bump PRs
+    needs: sanitize-payload
+    runs-on: ubuntu-22.04
+    outputs:
+      stale-pulls: ${{ steps.get-stale.outputs.stale_pulls }}
+    steps:
+      - name: Get open bump PRs (same dependency)
+        id: get-stale
+        uses: actions/github-script@v7
+        env:
+          BUMP_LABEL: ${{ needs.sanitize-payload.outputs.safe_label }}
+          BRANCH_PREFIX: bump-${{ needs.sanitize-payload.outputs.safe_dep }}-
+        with:
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const prefix = process.env.BRANCH_PREFIX;
+            const bumpLabel = process.env.BUMP_LABEL;
+
+            const res = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: "open",
+              sort: "created",
+              direction: "desc",
+              per_page: 100,
+            });
+
+            const pulls = res.data
+              .map((p) => {
+                const labels = (p.labels || []).map((l) => (typeof l === "string" ? l : l.name));
+                const hasBumpLabel = bumpLabel ? labels.includes(bumpLabel) : false;
+                const hasPrefix = p.head?.ref?.startsWith(prefix);
+                if (!hasBumpLabel && !hasPrefix) return null;
+                return {
+                  number: p.number,
+                  headRef: p.head.ref,
+                  keepAlive: labels.includes("keep-alive"),
+                };
+              })
+              .filter(Boolean);
+
+            core.setOutput("stale_pulls", pulls.length ? JSON.stringify(pulls) : "");
+
+  open-bump-pr:
+    name: Open bump PR
+    needs: [sanitize-payload, stale-bump-prs]
+    runs-on: ubuntu-22.04
+    outputs:
+      pr_number: ${{ steps.create-pr.outputs.pr_number }}
+      pr_url: ${{ steps.create-pr.outputs.pr_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Bump dependency
+        env:
+          SAFE_MODULE: ${{ needs.sanitize-payload.outputs.safe_module }}
+          SAFE_HEAD: ${{ needs.sanitize-payload.outputs.safe_head }}
+        run: |
+          set -euo pipefail
+          GOOS=linux go get "${SAFE_MODULE}@${SAFE_HEAD}"
+          go mod tidy
+      - name: Detect changes
+        id: changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create and push branch
+        if: ${{ steps.changes.outputs.has_changes == 'true' }}
+        env:
+          BRANCH: ${{ needs.sanitize-payload.outputs.safe_branch }}
+          GIT_USER: ${{ needs.sanitize-payload.outputs.safe_assignee }}
+          GIT_MAIL: ${{ needs.sanitize-payload.outputs.safe_email }}
+          COMMIT_SHA: ${{ needs.sanitize-payload.outputs.safe_head }}
+        run: |
+          set -euo pipefail
+          git config --global user.name "${GIT_USER}"
+          git config --global user.email "${GIT_MAIL}"
+          git checkout -b "${BRANCH}"
+          git add .
+          git commit -m "[ga-bump-dep] Bump dolt to ${COMMIT_SHA}"
+          git push origin "${BRANCH}"
+      - name: Create PR
+        id: create-pr
+        if: ${{ steps.changes.outputs.has_changes == 'true' }}
+        uses: actions/github-script@v7
+        env:
+          BRANCH: ${{ needs.sanitize-payload.outputs.safe_branch }}
+          DEP: ${{ needs.sanitize-payload.outputs.safe_dep }}
+          LABEL: ${{ needs.sanitize-payload.outputs.safe_label }}
+          SHA: ${{ needs.sanitize-payload.outputs.safe_head }}
+          SHORT: ${{ needs.sanitize-payload.outputs.safe_short }}
+          ASSIGNEE: ${{ needs.sanitize-payload.outputs.safe_assignee }}
+        with:
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const branch = process.env.BRANCH;
+            const dep = process.env.DEP;
+            const label = process.env.LABEL;
+            const sha = process.env.SHA;
+            const short = process.env.SHORT;
+            const assignee = process.env.ASSIGNEE;
+
+            const title = `[auto-bump] ${dep} @ ${short}`;
+            const body = [
+              `Auto-bump of \`${dep}\` to \`${sha}\` (triggered via \`repository_dispatch\`).`,
+              "",
+              "- This PR was created automatically.",
+              "- Older auto-bump PRs for the same dependency may be auto-closed if their CI is complete and acceptable.",
+            ].join("\n");
+
+            // If a PR already exists for this branch, reuse it.
+            const existing = await github.rest.pulls.list({
+              owner,
+              repo,
+              state: "open",
+              head: `${owner}:${branch}`,
+              per_page: 10,
+            });
+            if (existing.data.length > 0) {
+              const pr = existing.data[0];
+              if (label) {
+                try {
+                  await github.rest.issues.addLabels({
+                    owner,
+                    repo,
+                    issue_number: pr.number,
+                    labels: [label],
+                  });
+                } catch (e) {
+                  core.warning(`Failed to add label '${label}': ${e.message}`);
+                }
+              }
+              core.setOutput("pr_number", String(pr.number));
+              core.setOutput("pr_url", pr.html_url);
+              return;
+            }
+
+            const prRes = await github.rest.pulls.create({
+              owner,
+              repo,
+              head: branch,
+              base: "main",
+              title,
+              body,
+            });
+            const pr = prRes.data;
+
+            try {
+              await github.rest.issues.addAssignees({
+                owner,
+                repo,
+                issue_number: pr.number,
+                assignees: [assignee],
+              });
+            } catch (e) {
+              core.warning(`Failed to assign PR: ${e.message}`);
+            }
+
+            if (label) {
+              try {
+                await github.rest.issues.addLabels({
+                  owner,
+                  repo,
+                  issue_number: pr.number,
+                  labels: [label],
+                });
+              } catch (e) {
+                core.warning(`Failed to add label '${label}': ${e.message}`);
+              }
+            }
+
+            core.setOutput("pr_number", String(pr.number));
+            core.setOutput("pr_url", pr.html_url);
+
+  close-stale-prs:
+    name: Close stale bump PRs
+    needs: [sanitize-payload, stale-bump-prs, open-bump-pr]
+    if: ${{ needs.stale-bump-prs.outputs.stale-pulls != '' && needs.open-bump-pr.outputs.pr_url != '' }}
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        pull: ${{ fromJson(needs.stale-bump-prs.outputs.stale-pulls) }}
+    steps:
+      - name: Comment/close stale PR (only if CI acceptable)
+        uses: actions/github-script@v7
+        env:
+          PULL: ${{ toJson(matrix.pull) }}
+          NEW_PR_NUMBER: ${{ needs.open-bump-pr.outputs.pr_number }}
+          NEW_PR_URL: ${{ needs.open-bump-pr.outputs.pr_url }}
+        with:
+          github-token: ${{ secrets.REPO_ACCESS_TOKEN || secrets.GITHUB_TOKEN }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pull = JSON.parse(process.env.PULL);
+            const newPrNumber = Number(process.env.NEW_PR_NUMBER);
+            const newPrUrl = process.env.NEW_PR_URL;
+
+            if (pull.number === newPrNumber) return;
+            if (pull.keepAlive) return;
+
+            const okConclusions = new Set(["success", "neutral", "skipped"]);
+            const suites = await github.rest.checks.listSuitesForRef({
+              owner,
+              repo,
+              ref: pull.headRef,
+            });
+
+            for (const suite of suites.data.check_suites || []) {
+              if (suite.app?.slug !== "github-actions") continue;
+              if (suite.status !== "completed") {
+                core.info(`Leaving PR #${pull.number} open: suite ${suite.id} status=${suite.status} conclusion=${suite.conclusion}`);
+                return;
+              }
+              if (!suite.conclusion || !okConclusions.has(suite.conclusion)) {
+                core.info(`Leaving PR #${pull.number} open: suite ${suite.id} status=${suite.status} conclusion=${suite.conclusion}`);
+                return;
+              }
+            }
+
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: pull.number,
+              body: `This PR has been superseded by ${newPrUrl}`,
+            });
+
+            await github.rest.pulls.update({
+              owner,
+              repo,
+              pull_number: pull.number,
+              state: "closed",
+            });

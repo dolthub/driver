@@ -1,3 +1,17 @@
+// Copyright 2026 Dolthub, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package embedded
 
 import (
@@ -16,7 +30,7 @@ import (
 // current result set is in currentRowSet, with the index of its
 // producer in currentIdx.
 type doltMultiRows struct {
-	rowSets       []func()*doltRows
+	rowSets       []func() *doltRows
 	currentIdx    int
 	currentRowSet *doltRows
 }
@@ -58,7 +72,7 @@ func (d *doltMultiRows) Next(dest []driver.Value) error {
 // run. It is OK if this returns |true| but |NextResultSet| ends up
 // returning |io.EOF| after we run all the remaining queries.
 func (d *doltMultiRows) HasNextResultSet() bool {
-	return (d.currentIdx+1) < len(d.rowSets)
+	return (d.currentIdx + 1) < len(d.rowSets)
 }
 
 // Called anytime we are going on to the next result set, including at

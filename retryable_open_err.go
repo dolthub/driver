@@ -15,26 +15,23 @@
 package embedded
 
 import (
-	"database/sql/driver"
-	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
-	gms "github.com/dolthub/go-mysql-server/sql"
+	"errors"
+	"os"
+
+	"github.com/dolthub/dolt/go/store/nbs"
 )
 
-var _ driver.Tx = (*doltTx)(nil)
-
-type doltTx struct {
-	gmsCtx *gms.Context
-	se     *engine.SqlEngine
-}
-
-// Commit finishes the transaction.
-func (tx *doltTx) Commit() error {
-	_, _, _, err := tx.se.Query(tx.gmsCtx, "COMMIT;")
-	return translateError(err)
-}
-
-// Rollback cancels the transaction.
-func (tx *doltTx) Rollback() error {
-	_, _, _, err := tx.se.Query(tx.gmsCtx, "ROLLBACK;")
-	return translateError(err)
+func isRetryableOpenErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	// The intended primary retry signal for embedded usage: DB couldn't acquire its exclusive lock.
+	if errors.Is(err, nbs.ErrDatabaseLocked) {
+		return true
+	}
+	// Some filesystem / lower-level paths can surface timeouts as os.ErrDeadlineExceeded.
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	return false
 }

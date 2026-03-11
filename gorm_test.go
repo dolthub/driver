@@ -90,6 +90,10 @@ type XDFirmware struct {
 }
 
 func TestGorm(t *testing.T) {
+	// disable metrics during test runs
+	// no need to set it back to false since no test should have it set to true
+	metricsDisabled.Store(true)
+
 	// Dolt and MySQL truncate to microseconds
 	createTime1 := time.Now().UTC().Truncate(time.Microsecond)
 	updateTime1 := createTime1.Add(time.Hour)
@@ -184,18 +188,18 @@ func TestGorm(t *testing.T) {
 
 	// Query the objects
 	var findItem Item
-	// TODO: filtering on created date as inserted doesn't work, not sure if it's because the database is inserting 
-	//  its own timestamp or some kind of timezone issue 
+	// TODO: filtering on created date as inserted doesn't work, not sure if it's because the database is inserting
+	//  its own timestamp or some kind of timezone issue
 	result := db.
 		Preload("CreatedByInfo").
 		Preload("TestFirmwareInfo").
 		Preload("TestFirmwareInfo.CreatedByInfo").
 		Preload("WriteFirmwareInfo").
 		Preload("WriteFirmwareInfo.CreatedByInfo").
-		First(&findItem)	
+		First(&findItem)
 	require.NoError(t, result.Error)
 	assert.Equal(t, scrubItems(item, createTime1, updateTime1), scrubItems(findItem, createTime1, updateTime1))
-	
+
 	// Re-running migration should work fine
 	err = db.AutoMigrate(AllModels...)
 	require.NoError(t, err)
@@ -212,11 +216,11 @@ func TestGorm(t *testing.T) {
 	assert.Equal(t, scrubItems(item, createTime1, updateTime1), scrubItems(findItem, createTime1, updateTime1))
 }
 
-// scrubItems returns an item with the create and update times set to the given values for comparison purposes since 
-// the database connection returns time objects with different timezone information internals that can't be compared 
+// scrubItems returns an item with the create and update times set to the given values for comparison purposes since
+// the database connection returns time objects with different timezone information internals that can't be compared
 // with testify
 func scrubItems(item Item, create time.Time, update time.Time) Item {
-	item.CreateAt	= create
+	item.CreateAt = create
 	item.UpdateAt = update
 	item.CreatedByInfo.AuthLevel = 0 // this field is also auto assigned by the DB
 	item.TestFirmwareInfo.CreateAt = create
@@ -227,4 +231,3 @@ func scrubItems(item Item, create time.Time, update time.Time) Item {
 	item.WriteFirmwareInfo.CreatedByInfo.AuthLevel = 0
 	return item
 }
-

@@ -1,18 +1,30 @@
+// Copyright 2026 Dolthub, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package embedded
 
 import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
-	"fmt"
+	"errors"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
-	gmssql "github.com/dolthub/go-mysql-server/sql"
-	"github.com/dolthub/vitess/go/mysql"
 )
 
 const (
@@ -23,9 +35,15 @@ const (
 	DatabaseParam        = "database"
 	MultiStatementsParam = "multistatements"
 	ClientFoundRowsParam = "clientfoundrows"
+
+	// The following params are passed through to Dolt's local DB loading layer via
+	// engine.SqlEngineConfig.DBLoadParams. They are presence-based flags (values are ignored).
+	DisableSingletonCacheParam    = "disable_singleton_cache"
+	FailOnJournalLockTimeoutParam = "fail_on_journal_lock_timeout"
 )
 
 var _ driver.Driver = (*doltDriver)(nil)
+var _ driver.DriverContext = (*doltDriver)(nil)
 
 func init() {
 	sql.Register(DoltDriverName, &doltDriver{})
@@ -35,43 +53,15 @@ func init() {
 type doltDriver struct {
 }
 
-// Open opens and returns a connection to the datasource referenced by the string provided using the options provided.
-// datasources must be in file url format:
-//
-//	file:///User/brian/driver/example/path?commitname=Billy%20Bob&commitemail=bb@gmail.com&database=dbname
-//
-// The path needs to point to a directory whose subdirectories are dolt databases.  If a "Create Database" command is
-// run a new subdirectory will be created in this path.
-func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
-	ctx := context.Background()
-	var fs filesys.Filesys = filesys.LocalFS
+// openSqlEngineForConnector exists to make OpenConnector retry behavior testable without
+// needing to take actual filesystem locks. Production code should leave this nil.
+var openSqlEngineForConnector func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error)
 
-	ds, err := ParseDataSource(dataSource)
-	if err != nil {
-		return nil, err
+func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
+	if openSqlEngineForConnector != nil {
+		return openSqlEngineForConnector(ctx, cfg, fs, dir, version, seCfg)
 	}
-
-	exists, isDir := fs.Exists(ds.Directory)
-	if !exists {
-		return nil, fmt.Errorf("'%s' does not exist", ds.Directory)
-	} else if !isDir {
-		return nil, fmt.Errorf("%s: is a file.  Need to specify a directory", ds.Directory)
-	}
-
-	fs, err = fs.WithWorkingDir(ds.Directory)
-	if err != nil {
-		return nil, err
-	}
-
-	name := ds.Params[CommitNameParam]
-	if name == nil {
-		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitNameParam)
-	}
-
-	email := ds.Params[CommitEmailParam]
-	if email == nil {
-		return nil, fmt.Errorf("datasource '%s' must include the parameter '%s'", dataSource, CommitEmailParam)
-	}
+<<<<<<< fix-relative-paths
 
 	cfg := config.NewMapConfig(map[string]string{
 		config.UserNameKey:  name[0],
@@ -80,42 +70,34 @@ func (d *doltDriver) Open(dataSource string) (driver.Conn, error) {
 
 	// fs already switched to ds.Directory, so passing "." as a path
 	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", "0.40.17")
+=======
+	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, dir, version)
+>>>>>>> main
 	if err != nil {
 		return nil, err
 	}
 
-	seCfg := &engine.SqlEngineConfig{
-		IsReadOnly: false,
-		ServerUser: "root",
-		Autocommit: true,
-	}
+	go emitUsageEvent(context.Background(), mrEnv)
+	return engine.NewSqlEngine(ctx, mrEnv, seCfg)
+}
 
-	se, err := engine.NewSqlEngine(ctx, mrEnv, seCfg)
+// Open opens and returns a connection to the datasource referenced by the string provided using the options provided.
+// datasources must be in file url format:
+//
+//	file:///User/brian/driver/example/path?commitname=Billy%20Bob&commitemail=bb@gmail.com&database=dbname
+//
+// The path needs to point to a directory whose subdirectories are dolt databases.  If a "Create Database" command is
+// run a new subdirectory will be created in this path.
+func (d *doltDriver) Open(dsn string) (driver.Conn, error) {
+	return nil, errors.New("dolt SQL driver does not support Open()")
+}
+
+func (d *doltDriver) OpenConnector(dsn string) (driver.Connector, error) {
+	cfg, err := ParseDSN(dsn)
 	if err != nil {
 		return nil, err
 	}
-
-	gmsCtx, err := se.NewLocalContext(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if database, ok := ds.Params[DatabaseParam]; ok && len(database) == 1 {
-		gmsCtx.SetCurrentDatabase(database[0])
-	}
-	if ds.ParamIsTrue(ClientFoundRowsParam) {
-		client := gmsCtx.Client()
-		gmsCtx.SetClient(gmssql.Client{
-			User:         client.User,
-			Address:      client.Address,
-			Capabilities: client.Capabilities | mysql.CapabilityClientFoundRows,
-		})
-	}
-
-	return &DoltConn{
-		DataSource: ds,
-		se:         se,
-		gmsCtx:     gmsCtx,
-	}, nil
+	return NewConnector(cfg)
 }
 
 // LoadMultiEnvFromDir looks at each subfolder of the given path as a Dolt repository and attempts to return a MultiRepoEnv
