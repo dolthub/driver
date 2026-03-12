@@ -4,9 +4,9 @@ go 1.25.6
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260311213424-84e3c2ca847e
+	github.com/dolthub/dolt/go v0.40.5-0.20260312163831-cd4aad113434
 	github.com/dolthub/eventsapi_schema v0.0.0-20260310172945-37a9265ade69
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260311204756-b77b4b7c3924
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260311211816-cacba544a39e
 	github.com/dolthub/vitess v0.0.0-20260309181228-a99af9c518ab
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
@@ -131,6 +131,7 @@ require (
 	github.com/vbauerster/mpb/v8 v8.7.2 // indirect
 	github.com/xitongsys/parquet-go v1.6.2 // indirect
 	github.com/xitongsys/parquet-go-source v0.0.0-20240122235623-d6294584ab18 // indirect
+	github.com/xtaci/smux v1.5.56 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/detectors/gcp v1.38.0 // indirect
