@@ -68,7 +68,12 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	}
 
 	go emitUsageEvent(context.Background(), mrEnv)
-	return engine.NewSqlEngine(ctx, mrEnv, seCfg)
+	se, err := engine.NewSqlEngine(ctx, mrEnv, seCfg)
+	if err != nil {
+		mrEnv.Close(ctx)
+		return nil, err
+	}
+	return se, nil
 }
 
 // Open opens and returns a connection to the datasource referenced by the string provided using the options provided.
