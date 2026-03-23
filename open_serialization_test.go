@@ -70,7 +70,10 @@ func TestOpenSemSerializesConcurrentOpens(t *testing.T) {
 				CommitName:  "test",
 				CommitEmail: "test@test.com",
 			})
-			require.NoError(t, err)
+			assert.NoError(t, err)
+			if err != nil {
+				return
+			}
 			conn, err := c.Connect(context.Background())
 			assert.NoError(t, err)
 			assert.NotNil(t, conn)
