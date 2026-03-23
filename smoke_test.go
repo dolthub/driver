@@ -42,10 +42,9 @@ var mysqlDsn = "root@tcp(localhost:3306)/?charset=utf8mb4&parseTime=True&loc=Loc
 
 // TestPreparedStatements tests that values can be plugged into "?" placeholders in queries.
 func TestPreparedStatements(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "create table prepTest (id int, name varchar(256));")
 	require.NoError(t, err)
 	for rows.Next() {
@@ -62,10 +61,9 @@ func TestPreparedStatements(t *testing.T) {
 }
 
 func TestMultiStatements(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "show tables like 'schema_migrations'")
 	require.NoError(t, err)
 	for rows.Next() {
@@ -141,10 +139,9 @@ func TestMultiStatements(t *testing.T) {
 // TestMultiStatementsExecContext tests that using ExecContext to run a multi-statement query works as expected and
 // matches the behavior of the MySQL driver.
 func TestMultiStatementsExecContext(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	_, err := conn.ExecContext(ctx, "CREATE TABLE example_table (id int, name varchar(256));")
 	require.NoError(t, err)
 
@@ -182,11 +179,10 @@ func TestMultiStatementsExecContext(t *testing.T) {
 // TestMultiStatementsQueryContext tests that using QueryContext to run a multi-statement query works as expected and
 // matches the behavior of the MySQL driver.
 func TestMultiStatementsQueryContext(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
 	// QueryContext returns the results from the FIRST statement executed. This differs from the behavior for ExecContext.
-	ctx := context.Background()
+	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "SELECT 1 FROM dual; SELECT 2 FROM dual; ")
 	require.NoError(t, err)
 	require.NoError(t, rows.Err())
@@ -290,11 +286,10 @@ func TestMultiStatementsQueryContext(t *testing.T) {
 // TestMultiStatementsWithNoSpaces tests that multistatements are parsed correctly, even when
 // there is no space between the statement delimiter and the next statement.
 func TestMultiStatementsWithNoSpaces(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
 	var v int
-	ctx := context.Background()
+	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "select 42 from dual;select 43 from dual;")
 
 	// Check the first result set
@@ -319,11 +314,10 @@ func TestMultiStatementsWithNoSpaces(t *testing.T) {
 // TestMultiStatementsWithEmptyStatements tests that any empty statements in a multistatement query are skipped over.
 // This includes statements that are entirely empty, as well as statements that contain only comments.
 func TestMultiStatementsWithEmptyStatements(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
 	var v int
-	ctx := context.Background()
+	ctx := t.Context()
 
 	// Test that empty statements don't return errors and don't return result sets
 	rows, err := conn.QueryContext(ctx, "select 42 from dual; # This is an empty statement")
@@ -361,10 +355,9 @@ func TestMultiStatementsWithEmptyStatements(t *testing.T) {
 }
 
 func TestMultiStatementsStoredProc(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "create procedure p() begin select 1; end; call p(); call p(); call p();")
 	require.NoError(t, err)
 
@@ -402,10 +395,9 @@ func TestMultiStatementsStoredProc(t *testing.T) {
 }
 
 func TestMultiStatementsTrigger(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
-	ctx := context.Background()
+	ctx := t.Context()
 	res, err := conn.ExecContext(ctx, "create table t (i int primary key, j int);")
 	require.NoError(t, err)
 	_, err = res.RowsAffected()
@@ -455,9 +447,8 @@ func TestClientFoundRows(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			conn, cleanupFunc := initializeTestDatabaseConnection(t, test.clientFoundRows)
-			defer cleanupFunc()
-			ctx := context.Background()
+			conn := initializeTestDatabaseConnection(t, test.clientFoundRows)
+			ctx := t.Context()
 
 			res, err := conn.ExecContext(ctx, "create table testtable (id int primary key, name varchar(256))")
 			require.NoError(t, err)
@@ -478,8 +469,7 @@ func TestClientFoundRows(t *testing.T) {
 // TestQueryContextInitialization asserts that the context is correctly initialized for each query, including
 // setting the current time at query execution start.
 func TestQueryContextInitialization(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
 	ctx := context.Background()
 	rows, err := conn.QueryContext(ctx, "select NOW()")
@@ -509,8 +499,7 @@ func TestQueryContextInitialization(t *testing.T) {
 
 // TestTypes asserts that various MySQL types are returned as the expected Go type by the driver.
 func TestTypes(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
+	conn := initializeTestDatabaseConnection(t, false)
 
 	ctx := context.Background()
 	_, err := conn.ExecContext(ctx, `
@@ -544,22 +533,29 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 	require.IsType(t, time.Time{}, vals[6])
 }
 
-// initializeTestDatabaseConnection create a test database called testdb and initialize a database/sql connection
+func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) *sql.Conn {
+	db := initializeTestDatabase(t, clientFoundRows)
+	ctx := t.Context()
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		conn.Close()
+	})
+	res, err := conn.ExecContext(ctx, "use testdb")
+	require.NoError(t, err)
+	_, err = res.RowsAffected()
+	require.NoError(t, err)
+	return conn
+}
+
+// initializeTestDatabase create a test database called testdb and initialize a database/sql DB
 // using the Dolt driver. The connection, |conn|, is returned, and |cleanupFunc| is a function that the test function
 // should defer in order to properly dispose of test resources.
-func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn *sql.Conn, cleanUpFunc func()) {
-	// disable metrics during test runs
-	// no need to set it back to false since no test should have it set to true
-	metricsDisabled.Store(true)
+func initializeTestDatabase(t *testing.T, clientFoundRows bool) *sql.DB {
 
-	dir, err := os.MkdirTemp("", "dolthub-driver-tests-db*")
-	require.NoError(t, err)
+	dir := t.TempDir()
 
-	cleanUpFunc = func() {
-		os.RemoveAll(dir)
-	}
-
-	ctx := context.Background()
+	ctx := t.Context()
 
 	query := url.Values{
 		"commitname":      []string{"Billy Batson"},
@@ -573,6 +569,9 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 	dsn := url.URL{Scheme: "file", Path: encodeDir(dir), RawQuery: query.Encode()}
 	db, err := sql.Open(DoltDriverName, dsn.String())
 	require.NoError(t, err)
+	t.Cleanup(func() {
+		db.Close()
+	})
 	require.NoError(t, db.PingContext(ctx))
 
 	if runTestsAgainstMySQL {
@@ -585,8 +584,9 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 		require.NoError(t, db.PingContext(ctx))
 	}
 
-	conn, err = db.Conn(ctx)
+	conn, err := db.Conn(ctx)
 	require.NoError(t, err)
+	defer conn.Close()
 
 	res, err := conn.ExecContext(ctx, "drop database if exists testdb")
 	require.NoError(t, err)
@@ -598,18 +598,13 @@ func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (conn 
 	_, err = res.RowsAffected()
 	require.NoError(t, err)
 
-	res, err = conn.ExecContext(ctx, "use testdb")
-	require.NoError(t, err)
-	_, err = res.RowsAffected()
-	require.NoError(t, err)
-
-	return conn, cleanUpFunc
+	return db
 }
 
 // requireResults uses |conn| to run the specified |query| and asserts that the results
 // match |expected|. If any differences are encountered, the current test fails.
 func requireResults(t *testing.T, conn *sql.Conn, query string, expected [][]any) {
-	ctx := context.Background()
+	ctx := t.Context()
 	vals := make([]any, len(expected[0]))
 
 	rows, err := conn.QueryContext(ctx, query)
@@ -640,10 +635,8 @@ func encodeDir(dir string) string {
 
 // TestTransactionCommit tests that transactions can be committed successfully and changes are persisted.
 func TestTransactionCommit(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
-
-	ctx := context.Background()
+	conn := initializeTestDatabaseConnection(t, false)
+	ctx := t.Context()
 
 	// Create a test table
 	_, err := conn.ExecContext(ctx, "CREATE TABLE tx_test (id int primary key, value varchar(256));")
@@ -667,10 +660,8 @@ func TestTransactionCommit(t *testing.T) {
 
 // TestTransactionRollback tests that transactions can be rolled back and changes are discarded.
 func TestTransactionRollback(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
-
-	ctx := context.Background()
+	conn := initializeTestDatabaseConnection(t, false)
+	ctx := t.Context()
 
 	// Create a test table and insert initial data
 	_, err := conn.ExecContext(ctx, "CREATE TABLE tx_test (id int primary key, value varchar(256));")
@@ -697,10 +688,8 @@ func TestTransactionRollback(t *testing.T) {
 // TestTransactionMultipleOperations tests that multiple operations within a transaction
 // are all committed or rolled back together.
 func TestTransactionMultipleOperations(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
-
-	ctx := context.Background()
+	conn := initializeTestDatabaseConnection(t, false)
+	ctx := t.Context()
 
 	// Create a test table
 	_, err := conn.ExecContext(ctx, "CREATE TABLE tx_test (id int primary key, value varchar(256));")
@@ -742,10 +731,8 @@ func TestTransactionMultipleOperations(t *testing.T) {
 
 // TestBeginTxUnsupportedIsolationLevel tests that BeginTx returns an error for unsupported isolation levels.
 func TestBeginTxUnsupportedIsolationLevel(t *testing.T) {
-	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
-	defer cleanupFunc()
-
-	ctx := context.Background()
+	conn := initializeTestDatabaseConnection(t, false)
+	ctx := t.Context()
 
 	// Try to begin a transaction with an unsupported isolation level
 	_, err := conn.BeginTx(ctx, &sql.TxOptions{
@@ -753,4 +740,11 @@ func TestBeginTxUnsupportedIsolationLevel(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "isolation level not supported")
+}
+
+func TestMain(m *testing.M) {
+	// disable metrics during test runs
+	// no need to set it back to false since no test should have it set to true
+	metricsDisabled.Store(true)
+	os.Exit(m.Run())
 }
