@@ -57,10 +57,25 @@ type doltDriver struct {
 // needing to take actual filesystem locks. Production code should leave this nil.
 var openSqlEngineForConnector func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error)
 
+// openSem is a process-level semaphore that serializes openSqlEngine calls.
+// GMS uses global mutable state (system variables, status variables) during
+// engine initialization that is not safe for concurrent access, so we must
+// ensure at most one open is in-flight at a time.
+var openSem = make(chan struct{}, 1)
+
 func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
+	// Acquire the process-level open semaphore, respecting context cancellation.
+	select {
+	case openSem <- struct{}{}:
+		defer func() { <-openSem }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+
 	if openSqlEngineForConnector != nil {
 		return openSqlEngineForConnector(ctx, cfg, fs, dir, version, seCfg)
 	}
+
 	// fs already switched to dir, so passing "." as a path
 	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", version)
 	if err != nil {
