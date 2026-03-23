@@ -17,6 +17,7 @@ package embedded
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/url"
 	"os"
 	"strings"
@@ -531,6 +532,102 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 	require.EqualValues(t, "text", vals[4])
 	require.IsType(t, []byte(nil), vals[5])
 	require.IsType(t, time.Time{}, vals[6])
+}
+
+// TestShowProcesslistAndKill tests the SHOW PROCESSLIST and KILL QUERY functionality.
+// It verifies that active connections appear in the processlist with the correct state,
+// and that a running query can be killed while both connections continue to work afterward.
+func TestShowProcesslistAndKill(t *testing.T) {
+	ctx := context.Background()
+
+	db := initializeTestDatabase(t, false)
+	require.NoError(t, db.PingContext(ctx))
+
+	// Step 2: Create a new connection (conn1) and initialize the test database.
+	conn1, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer conn1.Close()
+
+	// Step 3: Run SHOW PROCESSLIST on conn1 and assert that exactly one connection is present.
+	var processCount int
+	rows, err := conn1.QueryContext(ctx, "show processlist")
+	require.NoError(t, err)
+	for rows.Next() {
+		var id int64
+		var user, host, dbName, command, state, info sql.NullString
+		var tm sql.NullInt64
+		require.NoError(t, rows.Scan(&id, &user, &host, &dbName, &command, &tm, &state, &info))
+		processCount++
+	}
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
+	require.Equal(t, 1, processCount, "expected exactly one connection in processlist before conn2 is opened")
+
+	// Step 4: Open a new, concurrent connection (conn2).
+	conn2, err := db.Conn(ctx)
+	require.NoError(t, err)
+	defer conn2.Close()
+
+	// Step 5: Run SELECT SLEEP(60) on conn2 concurrently.
+	sleepErrCh := make(chan error, 1)
+	go func() {
+		_, sleepErr := conn2.ExecContext(ctx, "select sleep(60)")
+		sleepErrCh <- sleepErr
+	}()
+
+	// Steps 6 & 7: Poll SHOW PROCESSLIST on conn1 until both connections appear,
+	// then assert that the sleeping connection shows the correct state.
+	var sleepConnID int64
+	require.Eventually(t, func() bool {
+		pRows, pErr := conn1.QueryContext(ctx, "show processlist")
+		if pErr != nil {
+			return false
+		}
+		defer pRows.Close()
+		var rowCount int
+		var foundSleep bool
+		for pRows.Next() {
+			var id int64
+			var user, host, dbName, command, state, info sql.NullString
+			var tm sql.NullInt64
+			if scanErr := pRows.Scan(&id, &user, &host, &dbName, &command, &tm, &state, &info); scanErr != nil {
+				return false
+			}
+			rowCount++
+			if info.Valid && strings.EqualFold(strings.TrimSpace(info.String), "select sleep(60)") {
+				sleepConnID = id
+				foundSleep = true
+			}
+		}
+		if pRows.Err() != nil {
+			return false
+		}
+		return rowCount >= 2 && foundSleep
+	}, 5*time.Second, 100*time.Millisecond, "expected both connections to appear in processlist with sleep query running")
+
+	require.NotZero(t, sleepConnID, "expected to find the connection ID of the sleeping query")
+
+	// Step 8: Kill the sleep query from conn1, leaving conn2's connection alive.
+	_, err = conn1.ExecContext(ctx, fmt.Sprintf("kill query %d", sleepConnID))
+	require.NoError(t, err)
+
+	// Step 9: Assert the sleep query is killed in a timely manner.
+	select {
+	case sleepErr := <-sleepErrCh:
+		require.Error(t, sleepErr, "expected an error after the sleep query was killed")
+	case <-time.After(5 * time.Second):
+		t.Fatal("sleep query was not killed within the expected timeout")
+	}
+
+	// Step 10: Assert both connections continue to work after the kill.
+	row := conn1.QueryRowContext(ctx, "select 1")
+	var v int
+	require.NoError(t, row.Scan(&v))
+	require.Equal(t, 1, v)
+
+	row = conn2.QueryRowContext(ctx, "select 1")
+	require.NoError(t, row.Scan(&v))
+	require.Equal(t, 1, v)
 }
 
 func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) *sql.Conn {
