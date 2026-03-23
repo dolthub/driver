@@ -91,9 +91,13 @@ func TestOpenSemRespectsContextCancellation(t *testing.T) {
 	prev := openSqlEngineForConnector
 	t.Cleanup(func() { openSqlEngineForConnector = prev })
 
-	// Install a slow stub so the semaphore is held for a while.
+	// acquired signals that the first goroutine holds the semaphore.
+	acquired := make(chan struct{})
+	// Install a stub that signals acquisition, then blocks until released.
+	release := make(chan struct{})
 	openSqlEngineForConnector = func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
-		time.Sleep(500 * time.Millisecond)
+		close(acquired)
+		<-release
 		return &engine.SqlEngine{}, nil
 	}
 
@@ -118,8 +122,8 @@ func TestOpenSemRespectsContextCancellation(t *testing.T) {
 		_, _ = openSqlEngine(context.Background(), doltCfg, filesys.LocalFS, dir, "0.40.17", seCfg)
 	}()
 
-	// Give the goroutine time to acquire the semaphore.
-	time.Sleep(20 * time.Millisecond)
+	// Wait until the first goroutine has actually acquired the semaphore.
+	<-acquired
 
 	// Second call with a short timeout should fail with context error.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
@@ -129,5 +133,6 @@ func TestOpenSemRespectsContextCancellation(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 
+	close(release)
 	wg.Wait()
 }
