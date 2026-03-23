@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
@@ -28,12 +29,17 @@ import (
 
 var _ driver.Conn = (*DoltConn)(nil)
 
+// globalQueryPid is a monotonically-increasing counter used to assign each query
+// a unique PID, mirroring SessionManager.nextPid() in the go-mysql-server server path.
+var globalQueryPid atomic.Uint64
+
 // DoltConn is a driver.Conn implementation that represents a connection to a dolt database located on the filesystem
 type DoltConn struct {
-	se         *engine.SqlEngine
-	gmsCtx     *gms.Context
-	DataSource *DoltDataSource
-	cfg        *Config
+	se             *engine.SqlEngine
+	gmsCtx         *gms.Context
+	DataSource     *DoltDataSource
+	cfg            *Config
+	activeQueryCtx *gms.Context // non-nil while a query is active; always accessed under dc.Lock()
 }
 
 // Prepare packages up |query| as a *doltStmt so it can be executed. If multistatements mode
@@ -61,9 +67,8 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 // prepareSingleStatement creates a doltStmt from |query|.
 func (d *DoltConn) prepareSingleStatement(query string) (*doltStmt, error) {
 	return &doltStmt{
-		query:  query,
-		se:     d.se,
-		gmsCtx: d.gmsCtx,
+		conn:  d,
+		query: query,
 	}, nil
 }
 
@@ -93,8 +98,56 @@ func (d *DoltConn) prepareMultiStatement(query string) (*doltMultiStmt, error) {
 	return &doltMultiStmt, nil
 }
 
+// beginQuery creates a fresh per-query context with a new unique PID and registers
+// the query with the ProcessList. It enforces serial semantics by ending any
+// previously active query before starting the new one.
+func (d *DoltConn) beginQuery(query string) (*gms.Context, error) {
+	if d.gmsCtx.ProcessList == nil {
+		return d.gmsCtx, nil
+	}
+	// Enforce serial semantics: if a previous query's rows were not closed,
+	// end that query in the processlist before starting the new one.
+	if d.activeQueryCtx != nil {
+		d.gmsCtx.ProcessList.EndQuery(d.activeQueryCtx)
+		d.activeQueryCtx = nil
+	}
+	// Create a fresh per-query context with a new unique PID, mirroring
+	// SessionManager.NewContextWithQuery in the server path.
+	freshCtx := d.se.ContextFactory(
+		d.gmsCtx.Context,
+		gms.WithSession(d.gmsCtx.Session),
+		gms.WithPid(globalQueryPid.Add(1)),
+		gms.WithProcessList(d.gmsCtx.ProcessList),
+	)
+	queryCtx, err := freshCtx.ProcessList.BeginQuery(freshCtx, query)
+	if err != nil {
+		return nil, err
+	}
+	d.activeQueryCtx = queryCtx
+	return queryCtx, nil
+}
+
+// endQuery transitions the connection back to Sleep in the ProcessList.
+func (d *DoltConn) endQuery(queryCtx *gms.Context) {
+	if d.gmsCtx.ProcessList == nil {
+		return
+	}
+	d.gmsCtx.ProcessList.EndQuery(queryCtx)
+	if d.activeQueryCtx == queryCtx {
+		d.activeQueryCtx = nil
+	}
+}
+
 // Close releases the resources held by the DoltConn instance
 func (d *DoltConn) Close() error {
+	if d.gmsCtx == nil || d.gmsCtx.ProcessList == nil || d.gmsCtx.Session == nil {
+		return nil
+	}
+	if d.activeQueryCtx != nil {
+		d.gmsCtx.ProcessList.EndQuery(d.activeQueryCtx)
+		d.activeQueryCtx = nil
+	}
+	d.gmsCtx.ProcessList.RemoveConnection(d.gmsCtx.Session.ID())
 	return nil
 }
 

@@ -20,7 +20,6 @@ import (
 
 	"github.com/dolthub/vitess/go/vt/sqlparser"
 
-	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/go-mysql-server/sql/types"
 	"github.com/dolthub/vitess/go/sqltypes"
@@ -92,9 +91,8 @@ func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 
 // doltStmt represents a single statement to be executed against a Dolt database.
 type doltStmt struct {
-	se     *engine.SqlEngine
-	gmsCtx *gms.Context
-	query  string
+	conn  *DoltConn
+	query string
 }
 
 var _ driver.Stmt = (*doltStmt)(nil)
@@ -132,12 +130,18 @@ func argsToBindings(args []driver.Value) (map[string]sqlparser.Expr, error) {
 
 // Exec executes a query that doesn't return rows, such as an INSERT or UPDATE.
 func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
-	sch, itr, err := stmt.execWithArgs(args)
+	queryCtx, err := stmt.conn.beginQuery(stmt.query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.conn.endQuery(queryCtx)
+
+	sch, itr, err := stmt.execWithArgsCtx(queryCtx, args)
 	if err != nil {
 		return nil, translateError(err)
 	}
 
-	res := newResult(stmt.gmsCtx, sch, itr)
+	res := newResult(queryCtx, sch, itr)
 	if res.err != nil {
 		return nil, res.err
 	}
@@ -145,13 +149,13 @@ func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
 	return res, nil
 }
 
-func (stmt *doltStmt) execWithArgs(args []driver.Value) (gms.Schema, gms.RowIter, error) {
+func (stmt *doltStmt) execWithArgsCtx(ctx *gms.Context, args []driver.Value) (gms.Schema, gms.RowIter, error) {
 	bindings, err := argsToBindings(args)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	sch, itr, _, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(stmt.gmsCtx, stmt.query, nil, bindings, nil)
+	sch, itr, _, err := stmt.conn.se.GetUnderlyingEngine().QueryWithBindings(ctx, stmt.query, nil, bindings, nil)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -160,16 +164,21 @@ func (stmt *doltStmt) execWithArgs(args []driver.Value) (gms.Schema, gms.RowIter
 
 // Query executes a query that may return rows, such as a SELECT
 func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
+	queryCtx, err := stmt.conn.beginQuery(stmt.query)
+	if err != nil {
+		return nil, err
+	}
+
 	var sch gms.Schema
 	var rowIter gms.RowIter
-	var err error
 
 	if len(args) != 0 {
-		sch, rowIter, err = stmt.execWithArgs(args)
+		sch, rowIter, err = stmt.execWithArgsCtx(queryCtx, args)
 	} else {
-		sch, rowIter, _, err = stmt.se.Query(stmt.gmsCtx, stmt.query)
+		sch, rowIter, _, err = stmt.conn.se.Query(queryCtx, stmt.query)
 	}
 	if err != nil {
+		stmt.conn.endQuery(queryCtx)
 		return nil, translateError(err)
 	}
 
@@ -179,12 +188,13 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 	// and future statements in a multi-statement query that depend on those results would fail.
 	// If an error does occur, we want that error to be returned in the Next() codepath, not here.
 	peekIter := peekableRowIter{iter: rowIter}
-	row, _ := peekIter.Peek(stmt.gmsCtx)
+	row, _ := peekIter.Peek(queryCtx)
 
 	return &doltRows{
 		sch:              sch,
 		rowIter:          &peekIter,
-		gmsCtx:           stmt.gmsCtx,
+		conn:             stmt.conn,
+		gmsCtx:           queryCtx,
 		isQueryResultSet: isQueryResultSet(row),
 	}, nil
 }

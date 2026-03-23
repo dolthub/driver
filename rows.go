@@ -108,7 +108,8 @@ func (d *doltMultiRows) NextResultSet() error {
 type doltRows struct {
 	sch     gms.Schema
 	rowIter gms.RowIter
-	gmsCtx  *gms.Context
+	conn    *DoltConn   // for endQuery on Close; may be nil for test contexts
+	gmsCtx  *gms.Context // the per-query context (queryCtx from beginQuery)
 
 	columns []string
 
@@ -143,7 +144,11 @@ func (rows *doltRows) Close() error {
 		return nil
 	}
 
-	return translateError(rows.rowIter.Close(rows.gmsCtx))
+	err := translateError(rows.rowIter.Close(rows.gmsCtx))
+	if rows.conn != nil {
+		rows.conn.endQuery(rows.gmsCtx)
+	}
+	return err
 }
 
 // Next is called to populate the next row of data into the provided slice. The provided slice will be the same size as
