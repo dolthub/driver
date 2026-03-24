@@ -1034,6 +1034,90 @@ func TestOpenFDsAfterClose(t *testing.T) {
 	assert.True(t, len(openFiles) == numDbOne || len(openFiles) == (numDbOne+1), "We are left with at most one more open file.")
 }
 
+func TestBranchSelectedOnConnectionReuse(t *testing.T) {
+	db, conn := initializeTestDatabaseConnection(t, false)
+
+	ctx := t.Context()
+
+	// Read current branch name
+	var originalBranch string
+	rows, err := conn.QueryContext(ctx, "select active_branch()")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&originalBranch))
+	require.NoError(t, rows.Close())
+	require.Equal(t, "main", originalBranch)
+
+	// Check out a new branch.
+	_, err = conn.ExecContext(ctx, "call dolt_checkout('-b', 'new_branch')")
+	require.NoError(t, err)
+	var newBranch string
+	rows, err = conn.QueryContext(ctx, "select active_branch()")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&newBranch))
+	require.NoError(t, rows.Close())
+	require.Equal(t, "new_branch", newBranch)
+
+	conn.Close()
+
+	conn, err = db.Conn(ctx)
+	require.NoError(t, err)
+
+	var secondConnBranch string
+	rows, err = conn.QueryContext(ctx, "select active_branch()")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&secondConnBranch))
+	require.NoError(t, rows.Close())
+	require.Equal(t, "main", secondConnBranch)
+
+	require.NoError(t, conn.Close())
+}
+
+func TestDatabaseSelectedOnConnectionReuse(t *testing.T) {
+	db, conn := initializeTestDatabaseConnection(t, false)
+
+	ctx := t.Context()
+
+	// Read current database name
+	var originalDatabase string
+	rows, err := conn.QueryContext(ctx, "select database()")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&originalDatabase))
+	require.NoError(t, rows.Close())
+	require.Equal(t, "testdb", originalDatabase)
+
+	// Check out a new branch.
+	_, err = conn.ExecContext(ctx, "create database new_database")
+	require.NoError(t, err)
+	_, err = conn.ExecContext(ctx, "use new_database")
+	require.NoError(t, err)
+	var newDatabase string
+	rows, err = conn.QueryContext(ctx, "select database()")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&newDatabase))
+	require.NoError(t, rows.Close())
+	require.Equal(t, "new_database", newDatabase)
+
+	conn.Close()
+
+	conn, err = db.Conn(ctx)
+	require.NoError(t, err)
+
+	var secondConnDatabase string
+	rows, err = conn.QueryContext(ctx, "select database()")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&secondConnDatabase))
+	require.NoError(t, rows.Close())
+	require.Equal(t, "testdb", secondConnDatabase)
+
+	require.NoError(t, conn.Close())
+}
+
 func TestMain(m *testing.M) {
 	// disable metrics during test runs
 	// no need to set it back to false since no test should have it set to true

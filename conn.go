@@ -39,10 +39,15 @@ var globalQueryPid atomic.Uint64
 
 // DoltConn is a driver.Conn implementation that represents a connection to a dolt database located on the filesystem
 type DoltConn struct {
-	se             *engine.SqlEngine
-	gmsCtx         *gms.Context
-	cfg            *Config
-	activeQueryCtx *gms.Context // non-nil while a query is active; always accessed under dc.Lock()
+	se     *engine.SqlEngine
+	gmsCtx *gms.Context
+	cfg    *Config
+
+	// non-nil while a query is active.  database/sql serializes
+	// all calls to Conn and any object returned by that Conn
+	// (Rows, Result, Tx, etc.), so use without explicit locking
+	// here is safe.
+	activeQueryCtx *gms.Context
 }
 
 // Prepare packages up |query| as a *doltStmt so it can be executed. If multistatements mode
@@ -216,6 +221,22 @@ func (d *DoltConn) QueryContext(ctx context.Context, query string, args []driver
 	// we just prepared can be closed.
 	defer stmt.Close()
 	return stmt.(driver.StmtQueryContext).QueryContext(ctx, args)
+}
+
+func (d *DoltConn) IsValid() bool {
+	// See |ResetSession|. We do not currently reuse sessions in
+	// `dolthub/driver`.
+	return false
+}
+
+func (d *DoltConn) ResetSession(ctx context.Context) error {
+	// Do not try to reuse connections.  dsess.DoltSession has a
+	// ton of in-memory state, including potentially working set
+	// heads for different branches across different databases.
+	//
+	// It's simpler to just throw the session away and get a new
+	// one.
+	return driver.ErrBadConn
 }
 
 func (d *DoltConn) queryWithBindings(ctx context.Context, query string, bindings map[string]sqlparser.Expr) (*gms.Context, gms.Schema, gms.RowIter, error) {
