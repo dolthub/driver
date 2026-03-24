@@ -32,8 +32,6 @@ import (
 // TestOpenSemSerializesConcurrentOpens verifies that concurrent openSqlEngine
 // calls from different connectors are serialized by the process-level semaphore.
 func TestOpenSemSerializesConcurrentOpens(t *testing.T) {
-	metricsDisabled.Store(true)
-
 	var concurrent int32
 	var maxConcurrent int32
 
@@ -89,8 +87,6 @@ func TestOpenSemSerializesConcurrentOpens(t *testing.T) {
 // TestOpenSemRespectsContextCancellation verifies that a caller blocked on the
 // semaphore returns ctx.Err() when the context is cancelled.
 func TestOpenSemRespectsContextCancellation(t *testing.T) {
-	metricsDisabled.Store(true)
-
 	prev := openSqlEngineForConnector
 	t.Cleanup(func() { openSqlEngineForConnector = prev })
 

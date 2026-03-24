@@ -62,8 +62,6 @@ func TestLoadMultiEnvFromDirRelativePath(t *testing.T) {
 // in openSqlEngine that replaces dir with "."). We mock the engine open and
 // verify that LoadMultiEnvFromDir succeeds with the captured fs and ".".
 func TestConnectorRelativePathPassesDot(t *testing.T) {
-	metricsDisabled.Store(true)
-
 	// Create <tmp>/data/myapp.
 	base := t.TempDir()
 	dbDir := filepath.Join(base, "data", "myapp")
