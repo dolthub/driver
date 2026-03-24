@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"io"
 	"strconv"
 
 	"github.com/dolthub/vitess/go/vt/sqlparser"
@@ -82,7 +81,7 @@ func (d doltMultiStmt) QueryContext(ctx context.Context, args []driver.NamedValu
 		rows, err := ret.rowSets[ret.currentIdx]()
 		if err != nil {
 			return nil, err
-		} else if rows.isQueryResultSet {
+		} else if rows.isQueryResultSet() {
 			ret.currentRowSet = rows
 			break
 		} else {
@@ -176,40 +175,6 @@ func (stmt *doltStmt) ExecContext(ctx context.Context, args []driver.NamedValue)
 	return res, nil
 }
 
-// makeRows wraps a schema and row iterator in a doltRows, draining non-query
-// result sets (DML, DDL) immediately so their side effects complete before returning.
-func makeRows(gmsCtx *gms.Context, sch gms.Schema, rowIter gms.RowIter) (*doltRows, error) {
-	if !isQueryResultSet(sch) {
-		// Non-query statements (DML, DDL, nil-schema) must be drained immediately so that
-		// their side effects complete before any subsequent statement executes.
-		for {
-			_, err := rowIter.Next(gmsCtx)
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				_ = rowIter.Close(gmsCtx)
-				return nil, translateError(err)
-			}
-		}
-		if err := rowIter.Close(gmsCtx); err != nil {
-			return nil, translateError(err)
-		}
-		return &doltRows{
-			sch:              sch,
-			gmsCtx:           gmsCtx,
-			isQueryResultSet: false,
-		}, nil
-	}
-
-	return &doltRows{
-		sch:              sch,
-		rowIter:          rowIter,
-		gmsCtx:           gmsCtx,
-		isQueryResultSet: true,
-	}, nil
-}
-
 func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 	return nil, errors.New("Query called on doltStmt; use QueryContext")
 }
@@ -239,17 +204,12 @@ func (stmt *doltStmt) QueryContext(ctx context.Context, args []driver.NamedValue
 		return nil, translateError(err)
 	}
 
-	rows, makeErr := makeRows(queryCtx, sch, rowIter)
-	if makeErr != nil {
-		stmt.conn.endQuery(queryCtx)
-		return nil, makeErr
-	}
-	if rows.isQueryResultSet {
-		rows.conn = stmt.conn
-	} else {
-		stmt.conn.endQuery(queryCtx)
-	}
-	return rows, nil
+	return &doltRows{
+		sch:     sch,
+		rowIter: rowIter,
+		gmsCtx:  queryCtx,
+		conn:    stmt.conn,
+	}, nil
 }
 
 // isQueryResultSet returns true if the schema indicates the statement produces a SELECT-style
