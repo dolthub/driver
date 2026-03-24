@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -821,4 +822,87 @@ func TestBeginTxUnsupportedIsolationLevel(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "isolation level not supported")
+}
+
+// Opening a Dolt database with the driver should always have its
+// own copy of the files. Closing the database should close those
+// files.
+func TestOpenFDsAfterClose(t *testing.T) {
+	dir := t.TempDir()
+	nomsDir, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	openFiles, supported, err := openFilesUnderDir(nomsDir)
+	if !supported {
+		t.SkipNow()
+	}
+	require.NoError(t, err)
+	require.Empty(t, openFiles)
+
+	t.Cleanup(func() {
+		openFiles, _, err := openFilesUnderDir(nomsDir)
+		require.NoError(t, err)
+		require.Empty(t, openFiles)
+	})
+
+	ctx := t.Context()
+
+	query := url.Values{
+		"commitname":      []string{"Billy Batson"},
+		"commitemail":     []string{"shazam@gmail.com"},
+		"database":        []string{"testdb"},
+		"multistatements": []string{"true"},
+	}
+	dsn := url.URL{Scheme: "file", Path: encodeDir(dir), RawQuery: query.Encode()}
+
+	dbOne, err := sql.Open(DoltDriverName, dsn.String())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		// TODO: require.NoError here once Close is clean.
+		dbOne.Close()
+	})
+
+	require.NoError(t, dbOne.PingContext(ctx))
+
+	connOne, err := dbOne.Conn(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, connOne.Close())
+	})
+
+	res, err := connOne.ExecContext(ctx, "drop database if exists testdb")
+	require.NoError(t, err)
+	_, err = res.RowsAffected()
+	require.NoError(t, err)
+
+	res, err = connOne.ExecContext(ctx, "create database testdb")
+	require.NoError(t, err)
+	_, err = res.RowsAffected()
+	require.NoError(t, err)
+
+	openFiles, _, err = openFilesUnderDir(nomsDir)
+	require.NoError(t, err)
+	require.NotEmpty(t, openFiles)
+	numDbOne := len(openFiles)
+
+	dbTwo, err := sql.Open(DoltDriverName, dsn.String())
+	require.NoError(t, err)
+	require.NoError(t, dbTwo.PingContext(t.Context()))
+
+	openFiles, _, err = openFilesUnderDir(nomsDir)
+	require.NoError(t, err)
+	require.Greater(t, len(openFiles), numDbOne)
+
+	// TODO: require.NoError after Close signals errors appropriately.
+	dbTwo.Close()
+
+	openFiles, _, err = openFilesUnderDir(nomsDir)
+	require.NoError(t, err)
+
+	// The way fslock is implemented, we can't actually currently cancel the LockWithTimeout syscall
+	// which will have happened against the noms directory LOCK file. The LOCK file from the previous
+	// database stays open until we close the holder.
+	//
+	// TODO: If we care, fix this. The only way I know of is Cgo and pthread_kill to EINTR the
+	// blocked flock call. On Linux, Cgo and io_uring for the flock call might be another option.
+	assert.True(t, len(openFiles) == numDbOne || len(openFiles) == (numDbOne+1), "We are left with at most one more open file.")
 }
