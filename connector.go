@@ -62,8 +62,8 @@ func newLocalContext(se *engine.SqlEngine, ctx context.Context) (*gmssql.Context
 		gmssql.WithProcessList(pl),
 	)
 	gmsCtx.Session.SetClient(gmssql.Client{User: "root", Address: "%", Capabilities: 0})
-	pl.AddConnection(doltSession.ID(), "%")
-	pl.ConnectionReady(doltSession)
+	pl.AddConnection(gmsCtx.ID(), "%")
+	pl.ConnectionReady(gmsCtx.Session)
 	return gmsCtx, nil
 }
 
