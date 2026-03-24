@@ -147,10 +147,9 @@ func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	return &DoltConn{
-		se:         se,
-		gmsCtx:     gmsCtx,
-		DataSource: nil,
-		cfg:        &c.cfg,
+		se:     se,
+		gmsCtx: gmsCtx,
+		cfg:    &c.cfg,
 	}, nil
 }
 

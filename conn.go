@@ -41,7 +41,6 @@ var globalQueryPid atomic.Uint64
 type DoltConn struct {
 	se             *engine.SqlEngine
 	gmsCtx         *gms.Context
-	DataSource     *DoltDataSource
 	cfg            *Config
 	activeQueryCtx *gms.Context // non-nil while a query is active; always accessed under dc.Lock()
 }
@@ -52,8 +51,6 @@ func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
 	multi := false
 	if d.cfg != nil {
 		multi = d.cfg.MultiStatements
-	} else if d.DataSource != nil {
-		multi = d.DataSource.ParamIsTrue(MultiStatementsParam)
 	}
 
 	if multi {
