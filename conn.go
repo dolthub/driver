@@ -49,11 +49,6 @@ type DoltConn struct {
 // Prepare packages up |query| as a *doltStmt so it can be executed. If multistatements mode
 // has been enabled, then a *doltMultiStmt will be returned, capable of executing multiple statements.
 func (d *DoltConn) Prepare(query string) (driver.Stmt, error) {
-	// Reuse the same ctx instance, but update the QueryTime to the current time.
-	// Statements are executed serially on a connection, so it's safe to reuse
-	// the same ctx instance and update the time.
-	d.gmsCtx.SetQueryTime(time.Now())
-
 	multi := false
 	if d.cfg != nil {
 		multi = d.cfg.MultiStatements
@@ -127,7 +122,7 @@ func (d *DoltConn) beginQuery(ctx context.Context, query string) (*gms.Context, 
 	)
 	queryCtx, err := freshCtx.ProcessList.BeginQuery(freshCtx, query)
 	if err != nil {
-		return nil, err
+		return nil, translateError(err)
 	}
 	d.activeQueryCtx = queryCtx
 	return queryCtx, nil
@@ -174,32 +169,24 @@ func (d *DoltConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 		return nil, fmt.Errorf("isolation level not supported '%d'", opts.Isolation)
 	}
 
-	queryCtx, err := d.beginQuery(ctx, "BEGIN;")
+	queryCtx, _, iter, err := d.queryWithBindings(ctx, "begin", nil)
 	if err != nil {
-		return nil, translateError(err)
+		return nil, err
 	}
-	defer d.endQuery(queryCtx)
-
-	_, _, _, err = d.se.Query(queryCtx, "BEGIN;")
-	if err != nil {
+	if err := iter.Close(queryCtx); err != nil {
 		return nil, translateError(err)
 	}
 
 	return &doltTx{
-		se:     d.se,
-		gmsCtx: d.gmsCtx,
+		ctx:  ctx,
+		conn: d,
 	}, nil
 }
 
 // Ping implements driver.Pinger. It verifies the connection is still alive by
 // executing a lightweight query against the engine.
 func (d *DoltConn) Ping(ctx context.Context) error {
-	queryCtx, err := d.beginQuery(ctx, "SELECT 1")
-	if err != nil {
-		return driver.ErrBadConn
-	}
-	defer d.endQuery(queryCtx)
-	_, itr, _, err := d.se.Query(queryCtx, "SELECT 1")
+	queryCtx, _, itr, err := d.queryWithBindings(ctx, "select 1", nil)
 	if err != nil {
 		return driver.ErrBadConn
 	}
@@ -213,7 +200,6 @@ func (d *DoltConn) Ping(ctx context.Context) error {
 // governs the preparation step only; the returned statement inherits the
 // connection's ambient context for its executions.
 func (d *DoltConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	d.gmsCtx.SetQueryTime(time.Now())
 	return d.Prepare(query)
 }
 
@@ -239,7 +225,36 @@ func (d *DoltConn) QueryContext(ctx context.Context, query string, args []driver
 	return stmt.(driver.StmtQueryContext).QueryContext(ctx, args)
 }
 
-func (d *DoltConn) queryWithBindings(ctx *gms.Context, query string, bindings map[string]sqlparser.Expr) (gms.Schema, gms.RowIter, error) {
-	sch, itr, _, err := d.se.QueryWithBindings(ctx, query, nil, bindings, nil)
-	return sch, itr, err
+func (d *DoltConn) queryWithBindings(ctx context.Context, query string, bindings map[string]sqlparser.Expr) (*gms.Context, gms.Schema, gms.RowIter, error) {
+	queryCtx, err := d.beginQuery(ctx, query)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	queryCtx.SetQueryTime(time.Now())
+	sch, itr, _, err := d.se.QueryWithBindings(queryCtx, query, nil, bindings, nil)
+	if err != nil {
+		d.endQuery(queryCtx)
+		return nil, nil, nil, translateError(err)
+	}
+	return queryCtx, sch, &callbackOnCloseIter{
+		iter: itr,
+		callback: func() {
+			d.endQuery(queryCtx)
+		},
+	}, nil
+}
+
+type callbackOnCloseIter struct {
+	iter     gms.RowIter
+	callback func()
+}
+
+func (c callbackOnCloseIter) Next(ctx *gms.Context) (gms.Row, error) {
+	return c.iter.Next(ctx)
+}
+
+func (c callbackOnCloseIter) Close(ctx *gms.Context) error {
+	err := c.iter.Close(ctx)
+	c.callback()
+	return err
 }

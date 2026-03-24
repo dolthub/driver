@@ -152,18 +152,13 @@ func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
 
 // ExecContext implements driver.StmtExecContext.
 func (stmt *doltStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	queryCtx, err := stmt.conn.beginQuery(ctx, stmt.query)
-	if err != nil {
-		return nil, err
-	}
-	defer stmt.conn.endQuery(queryCtx)
 	bindings, err := namedArgsToBindings(args)
 	if err != nil {
 		return nil, err
 	}
-	sch, itr, err := stmt.conn.queryWithBindings(queryCtx, stmt.query, bindings)
+	queryCtx, sch, itr, err := stmt.conn.queryWithBindings(ctx, stmt.query, bindings)
 	if err != nil {
-		return nil, translateError(err)
+		return nil, err
 	}
 	res, err := newResult(queryCtx, sch, itr)
 	if err != nil {
@@ -178,25 +173,14 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 
 // QueryContext implements driver.StmtQueryContext.
 func (stmt *doltStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	queryCtx, err := stmt.conn.beginQuery(ctx, stmt.query)
+	bindings, bindErr := namedArgsToBindings(args)
+	if bindErr != nil {
+		return nil, bindErr
+	}
+	queryCtx, sch, rowIter, err := stmt.conn.queryWithBindings(ctx, stmt.query, bindings)
 	if err != nil {
 		return nil, err
 	}
-
-	var sch gms.Schema
-	var rowIter gms.RowIter
-
-	bindings, bindErr := namedArgsToBindings(args)
-	if bindErr != nil {
-		stmt.conn.endQuery(queryCtx)
-		return nil, bindErr
-	}
-	sch, rowIter, err = stmt.conn.queryWithBindings(queryCtx, stmt.query, bindings)
-	if err != nil {
-		stmt.conn.endQuery(queryCtx)
-		return nil, translateError(err)
-	}
-
 	return &doltRows{
 		sch:     sch,
 		rowIter: rowIter,

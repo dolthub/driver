@@ -115,7 +115,7 @@ type doltRows struct {
 	sch     gms.Schema
 	rowIter gms.RowIter
 	conn    *DoltConn
-	gmsCtx  *gms.Context // the per-query context (queryCtx from beginQuery)
+	gmsCtx  *gms.Context // per-query context; used for Next and Close calls on the iter.
 
 	columns []string
 
@@ -152,12 +152,10 @@ func (rows *doltRows) Close() error {
 		err := rows.drain()
 		if err != nil {
 			_ = rows.rowIter.Close(rows.gmsCtx)
-			rows.conn.endQuery(rows.gmsCtx)
-			return translateError(err)
+			return err
 		}
 	}
 	err := translateError(rows.rowIter.Close(rows.gmsCtx))
-	rows.conn.endQuery(rows.gmsCtx)
 	return err
 }
 
@@ -173,7 +171,7 @@ func (rows *doltRows) drain() error {
 				if err == io.EOF {
 					return nil
 				}
-				return err
+				return translateError(err)
 			}
 		}
 	}
