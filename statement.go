@@ -119,6 +119,9 @@ func (stmt *doltStmt) NumInput() int {
 }
 
 func namedArgsToBindings(args []driver.NamedValue) (map[string]sqlparser.Expr, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
 	bindings := make(map[string]sqlparser.Expr)
 	for _, arg := range args {
 		var key string
@@ -189,16 +192,12 @@ func (stmt *doltStmt) QueryContext(ctx context.Context, args []driver.NamedValue
 	var sch gms.Schema
 	var rowIter gms.RowIter
 
-	if len(args) != 0 {
-		bindings, bindErr := namedArgsToBindings(args)
-		if bindErr != nil {
-			stmt.conn.endQuery(queryCtx)
-			return nil, bindErr
-		}
-		sch, rowIter, err = stmt.execCore(queryCtx, bindings)
-	} else {
-		sch, rowIter, _, err = stmt.conn.se.Query(queryCtx, stmt.query)
+	bindings, bindErr := namedArgsToBindings(args)
+	if bindErr != nil {
+		stmt.conn.endQuery(queryCtx)
+		return nil, bindErr
 	}
+	sch, rowIter, err = stmt.execCore(queryCtx, bindings)
 	if err != nil {
 		stmt.conn.endQuery(queryCtx)
 		return nil, translateError(err)
