@@ -30,16 +30,16 @@ type doltResult struct {
 	err      error
 }
 
-func newResult(gmsCtx *gms.Context, sch gms.Schema, rowItr gms.RowIter) *doltResult {
-	var resultErr error
+func newResult(gmsCtx *gms.Context, sch gms.Schema, itr gms.RowIter) (*doltResult, error) {
 	var affected int64
 	var last int64
 
 	for {
-		r, err := rowItr.Next(gmsCtx)
+		r, err := itr.Next(gmsCtx)
 		if err != nil {
 			if err != io.EOF {
-				resultErr = translateError(err)
+				_ = itr.Close(gmsCtx)
+				return nil, translateError(err)
 			}
 			break
 		}
@@ -52,15 +52,14 @@ func newResult(gmsCtx *gms.Context, sch gms.Schema, rowItr gms.RowIter) *doltRes
 		}
 	}
 
-	if err := rowItr.Close(gmsCtx); err != nil {
-		return &doltResult{err: err}
+	if err := itr.Close(gmsCtx); err != nil {
+		return nil, translateError(err)
 	}
 
 	return &doltResult{
 		affected: affected,
 		last:     last,
-		err:      resultErr,
-	}
+	}, nil
 }
 
 // LastInsertId returns the database's auto-generated ID after, for example, an INSERT into a table with primary key.

@@ -70,18 +70,18 @@ func (d doltMultiStmt) ExecContext(ctx context.Context, args []driver.NamedValue
 func (d doltMultiStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	var ret doltMultiRows
 	for _, stmt := range d.stmts {
-		ret.rowSets = append(ret.rowSets, func() *doltRows {
+		ret.rowSets = append(ret.rowSets, func() (*doltRows, error) {
 			rows, err := stmt.QueryContext(ctx, args)
 			if err != nil {
-				return &doltRows{err: err}
+				return nil, err
 			}
-			return rows.(*doltRows)
+			return rows.(*doltRows), nil
 		})
 	}
 	for ret.currentIdx = 0; ret.currentIdx < len(ret.rowSets); ret.currentIdx++ {
-		rows := ret.rowSets[ret.currentIdx]()
-		if rows.err != nil {
-			return nil, rows.err
+		rows, err := ret.rowSets[ret.currentIdx]()
+		if err != nil {
+			return nil, err
 		} else if rows.isQueryResultSet {
 			ret.currentRowSet = rows
 			break
@@ -169,9 +169,9 @@ func (stmt *doltStmt) ExecContext(ctx context.Context, args []driver.NamedValue)
 	if err != nil {
 		return nil, translateError(err)
 	}
-	res := newResult(queryCtx, sch, itr)
-	if res.err != nil {
-		return nil, res.err
+	res, err := newResult(queryCtx, sch, itr)
+	if err != nil {
+		return nil, err
 	}
 	return res, nil
 }
@@ -182,23 +182,22 @@ func makeRows(gmsCtx *gms.Context, sch gms.Schema, rowIter gms.RowIter) (*doltRo
 	if !isQueryResultSet(sch) {
 		// Non-query statements (DML, DDL, nil-schema) must be drained immediately so that
 		// their side effects complete before any subsequent statement executes.
-		var drainErr error
 		for {
 			_, err := rowIter.Next(gmsCtx)
 			if err != nil {
-				if err != io.EOF {
-					drainErr = translateError(err)
+				if err == io.EOF {
+					break
 				}
-				break
+				_ = rowIter.Close(gmsCtx)
+				return nil, translateError(err)
 			}
 		}
-		if err := rowIter.Close(gmsCtx); err != nil && drainErr == nil {
-			drainErr = translateError(err)
+		if err := rowIter.Close(gmsCtx); err != nil {
+			return nil, translateError(err)
 		}
 		return &doltRows{
 			sch:              sch,
 			gmsCtx:           gmsCtx,
-			err:              drainErr,
 			isQueryResultSet: false,
 		}, nil
 	}
