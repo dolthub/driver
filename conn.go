@@ -102,40 +102,36 @@ func (d *DoltConn) prepareMultiStatement(query string) (*doltMultiStmt, error) {
 // previously active query before starting the new one. The provided ctx is used
 // as the parent context so that both user cancellation and KILL commands work.
 func (d *DoltConn) beginQuery(ctx context.Context, query string) (*gms.Context, error) {
-	if d.gmsCtx.ProcessList == nil {
-		return d.gmsCtx.WithContext(ctx), nil
-	}
-	// Enforce serial semantics: if a previous query's rows were not closed,
-	// end that query in the processlist before starting the new one.
+	// Create a per-query context with a new unique PID. Use the caller's
+	// ctx as the parent so that user cancellation propagates into the query.
+	res := d.gmsCtx.WithContext(ctx)
+	gms.WithPid(globalQueryPid.Add(1))(res) // Unconventional; *Context.WithPid() does not exist yet.
+
+	// If an existing query might still be running, kill it.
 	if d.activeQueryCtx != nil {
-		d.gmsCtx.ProcessList.EndQuery(d.activeQueryCtx)
+		if res.ProcessList != nil {
+			res.ProcessList.EndQuery(d.activeQueryCtx)
+		}
 		d.activeQueryCtx = nil
 	}
-	// Create a fresh per-query context with a new unique PID, mirroring
-	// SessionManager.NewContextWithQuery in the server path. Use the caller's
-	// ctx as the parent so that user cancellation propagates into the query.
-	freshCtx := d.se.ContextFactory(
-		ctx,
-		gms.WithSession(d.gmsCtx.Session),
-		gms.WithPid(globalQueryPid.Add(1)),
-		gms.WithProcessList(d.gmsCtx.ProcessList),
-	)
-	queryCtx, err := freshCtx.ProcessList.BeginQuery(freshCtx, query)
-	if err != nil {
-		return nil, translateError(err)
+	if res.ProcessList != nil {
+		var err error
+		res, err = res.ProcessList.BeginQuery(res, query)
+		if err != nil {
+			return nil, translateError(err)
+		}
 	}
-	d.activeQueryCtx = queryCtx
-	return queryCtx, nil
+	d.activeQueryCtx = res
+	return res, nil
 }
 
 // endQuery transitions the connection back to Sleep in the ProcessList.
 func (d *DoltConn) endQuery(queryCtx *gms.Context) {
-	if d.gmsCtx.ProcessList == nil {
-		return
-	}
-	d.gmsCtx.ProcessList.EndQuery(queryCtx)
 	if d.activeQueryCtx == queryCtx {
 		d.activeQueryCtx = nil
+	}
+	if d.gmsCtx.ProcessList != nil {
+		d.gmsCtx.ProcessList.EndQuery(queryCtx)
 	}
 }
 
