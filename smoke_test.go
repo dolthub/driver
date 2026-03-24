@@ -614,6 +614,65 @@ func TestSleepCancel(t *testing.T) {
 	rows.Close()
 }
 
+// TestNextResultSetSkipsExpensiveIteration verifies that calling NextResultSet() in the
+// middle of a slow result set does not block waiting for remaining rows to be consumed.
+// For example, "select 1 union select sleep(60); select 2" should allow advancing to
+// the second result set without waiting 60 seconds for the sleep to complete.
+func TestNextResultSetSkipsExpensiveIteration(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+
+	ctx := context.Background()
+
+	// Wrap QueryContext in a goroutine in case the UNION is evaluated eagerly.
+	var rows *sql.Rows
+	var err error
+	done := make(chan struct{})
+	go func() {
+		rows, err = conn.QueryContext(ctx, "select 1 union select sleep(60); select 2;")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		require.FailNow(t, "QueryContext should return quickly for a lazy iterator")
+	}
+	require.NoError(t, err)
+
+	// Read the first row of the first result set.
+	var v any
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.EqualValues(t, 1, v)
+
+	// Call NextResultSet() without consuming the rest of the first result set.
+	// This should return quickly — it must not wait for sleep(60) to complete.
+	nextDone := make(chan bool)
+	go func() {
+		nextDone <- rows.NextResultSet()
+	}()
+	select {
+	case hasNext := <-nextDone:
+		require.True(t, hasNext)
+	case <-time.After(1 * time.Second):
+		require.FailNow(t, "NextResultSet() must not wait for sleep(60) to complete")
+	}
+
+	// The second result set should be accessible.
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Scan(&v))
+	require.EqualValues(t, 2, v)
+	require.False(t, rows.Next())
+	require.False(t, rows.NextResultSet())
+	require.NoError(t, rows.Close())
+
+	// Connection must still work after the abandoned sleep.
+	r := conn.QueryRowContext(ctx, "select 3+4")
+	var i int
+	require.NoError(t, r.Scan(&i))
+	require.Equal(t, 7, i)
+}
+
 // TestShowProcesslistAndKill tests the SHOW PROCESSLIST and KILL QUERY functionality.
 // It verifies that active connections appear in the processlist with the correct state,
 // and that a running query can be killed while both connections continue to work afterward.

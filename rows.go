@@ -114,7 +114,7 @@ func (d *doltMultiRows) NextResultSet() error {
 type doltRows struct {
 	sch     gms.Schema
 	rowIter gms.RowIter
-	conn    *DoltConn   // for endQuery on Close; may be nil for test contexts
+	conn    *DoltConn
 	gmsCtx  *gms.Context // the per-query context (queryCtx from beginQuery)
 
 	columns []string
@@ -147,19 +147,17 @@ func (rows *doltRows) isQueryResultSet() bool {
 
 // Close closes the rows iterator.
 func (rows *doltRows) Close() error {
-	// Drain remaining rows before closing, mirroring the behavior of a MySQL
-	// client/server driver which must consume all pending rows on the wire
-	// before the connection can advance to the next result set.
-	err := rows.drain()
-	if err != nil {
-		_ = rows.rowIter.Close(rows.gmsCtx)
-		return translateError(err)
+	if !rows.isQueryResultSet() {
+		// DML and DDL want Next() to be called on their iters in order to run.
+		err := rows.drain()
+		if err != nil {
+			_ = rows.rowIter.Close(rows.gmsCtx)
+			rows.conn.endQuery(rows.gmsCtx)
+			return translateError(err)
+		}
 	}
-
-	err = translateError(rows.rowIter.Close(rows.gmsCtx))
-	if rows.conn != nil {
-		rows.conn.endQuery(rows.gmsCtx)
-	}
+	err := translateError(rows.rowIter.Close(rows.gmsCtx))
+	rows.conn.endQuery(rows.gmsCtx)
 	return err
 }
 
