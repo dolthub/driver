@@ -212,9 +212,9 @@ func (d *DoltConn) QueryContext(ctx context.Context, query string, args []driver
 	if err != nil {
 		return nil, err
 	}
-	// Do not Close stmt here: the rows are still live and the stmt must not be
-	// closed while they are outstanding. doltStmt holds no resources that need
-	// explicit cleanup beyond what doltRows already owns, so it will be GC'd.
+	// While the driver.Rows will live beyond this call, the stmt
+	// we just prepared can be closed.
+	defer stmt.Close()
 	return stmt.(driver.StmtQueryContext).QueryContext(ctx, args)
 }
 
@@ -231,15 +231,15 @@ func (d *DoltConn) queryWithBindings(ctx context.Context, query string, bindings
 	}
 	return queryCtx, sch, &callbackOnCloseIter{
 		iter: itr,
-		callback: func() {
-			d.endQuery(queryCtx)
+		callback: func(ctx *gms.Context) {
+			d.endQuery(ctx)
 		},
 	}, nil
 }
 
 type callbackOnCloseIter struct {
 	iter     gms.RowIter
-	callback func()
+	callback func(*gms.Context)
 }
 
 func (c callbackOnCloseIter) Next(ctx *gms.Context) (gms.Row, error) {
@@ -248,6 +248,6 @@ func (c callbackOnCloseIter) Next(ctx *gms.Context) (gms.Row, error) {
 
 func (c callbackOnCloseIter) Close(ctx *gms.Context) error {
 	err := c.iter.Close(ctx)
-	c.callback()
+	c.callback(ctx)
 	return err
 }
