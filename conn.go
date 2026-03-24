@@ -238,3 +238,8 @@ func (d *DoltConn) QueryContext(ctx context.Context, query string, args []driver
 	// explicit cleanup beyond what doltRows already owns, so it will be GC'd.
 	return stmt.(driver.StmtQueryContext).QueryContext(ctx, args)
 }
+
+func (d *DoltConn) queryWithBindings(ctx *gms.Context, query string, bindings map[string]sqlparser.Expr) (gms.Schema, gms.RowIter, error) {
+	sch, itr, _, err := d.se.QueryWithBindings(ctx, query, nil, bindings, nil)
+	return sch, itr, err
+}

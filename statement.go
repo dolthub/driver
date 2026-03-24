@@ -146,12 +146,6 @@ func namedArgsToBindings(args []driver.NamedValue) (map[string]sqlparser.Expr, e
 	return bindings, nil
 }
 
-// execCore runs the query with the given bindings against the provided gmsCtx.
-func (stmt *doltStmt) execCore(gmsCtx *gms.Context, bindings map[string]sqlparser.Expr) (gms.Schema, gms.RowIter, error) {
-	sch, itr, _, err := stmt.conn.se.GetUnderlyingEngine().QueryWithBindings(gmsCtx, stmt.query, nil, bindings, nil)
-	return sch, itr, err
-}
-
 func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
 	return nil, errors.New("Exec called on doltStmt; use ExecContext")
 }
@@ -167,7 +161,7 @@ func (stmt *doltStmt) ExecContext(ctx context.Context, args []driver.NamedValue)
 	if err != nil {
 		return nil, err
 	}
-	sch, itr, err := stmt.execCore(queryCtx, bindings)
+	sch, itr, err := stmt.conn.queryWithBindings(queryCtx, stmt.query, bindings)
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -197,7 +191,7 @@ func (stmt *doltStmt) QueryContext(ctx context.Context, args []driver.NamedValue
 		stmt.conn.endQuery(queryCtx)
 		return nil, bindErr
 	}
-	sch, rowIter, err = stmt.execCore(queryCtx, bindings)
+	sch, rowIter, err = stmt.conn.queryWithBindings(queryCtx, stmt.query, bindings)
 	if err != nil {
 		stmt.conn.endQuery(queryCtx)
 		return nil, translateError(err)
