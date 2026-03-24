@@ -243,12 +243,19 @@ func (c *Connector) openEngineWithRetry(ctx context.Context) (*engine.SqlEngine,
 		Autocommit: true,
 	}
 
+	if seCfg.DBLoadParams == nil {
+		seCfg.DBLoadParams = make(map[string]interface{})
+	}
+	// The SqlEngine always owns the DoltDB instances it is
+	// operating against.  We don't want two different sql.DB
+	// instances opened in the same process against the same
+	// directory sharing their DoltDB instances, and
+	// correspondingly the NomsBlockStore, journal, files they
+	// open.
+	seCfg.DBLoadParams[dbfactory.DisableSingletonCacheParam] = struct{}{}
+
 	// For deterministic retries on lock contention.
 	if c.cfg.BackOff != nil {
-		if seCfg.DBLoadParams == nil {
-			seCfg.DBLoadParams = make(map[string]interface{})
-		}
-		seCfg.DBLoadParams[dbfactory.DisableSingletonCacheParam] = struct{}{}
 		seCfg.DBLoadParams[dbfactory.FailOnJournalLockTimeoutParam] = struct{}{}
 	}
 

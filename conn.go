@@ -28,6 +28,10 @@ import (
 )
 
 var _ driver.Conn = (*DoltConn)(nil)
+var _ driver.Pinger = (*DoltConn)(nil)
+var _ driver.ConnPrepareContext = (*DoltConn)(nil)
+var _ driver.ExecerContext = (*DoltConn)(nil)
+var _ driver.QueryerContext = (*DoltConn)(nil)
 
 // globalQueryPid is a monotonically-increasing counter used to assign each query
 // a unique PID, mirroring SessionManager.nextPid() in the go-mysql-server server path.
@@ -100,10 +104,11 @@ func (d *DoltConn) prepareMultiStatement(query string) (*doltMultiStmt, error) {
 
 // beginQuery creates a fresh per-query context with a new unique PID and registers
 // the query with the ProcessList. It enforces serial semantics by ending any
-// previously active query before starting the new one.
-func (d *DoltConn) beginQuery(query string) (*gms.Context, error) {
+// previously active query before starting the new one. The provided ctx is used
+// as the parent context so that both user cancellation and KILL commands work.
+func (d *DoltConn) beginQuery(ctx context.Context, query string) (*gms.Context, error) {
 	if d.gmsCtx.ProcessList == nil {
-		return d.gmsCtx, nil
+		return d.gmsCtx.WithContext(ctx), nil
 	}
 	// Enforce serial semantics: if a previous query's rows were not closed,
 	// end that query in the processlist before starting the new one.
@@ -112,9 +117,10 @@ func (d *DoltConn) beginQuery(query string) (*gms.Context, error) {
 		d.activeQueryCtx = nil
 	}
 	// Create a fresh per-query context with a new unique PID, mirroring
-	// SessionManager.NewContextWithQuery in the server path.
+	// SessionManager.NewContextWithQuery in the server path. Use the caller's
+	// ctx as the parent so that user cancellation propagates into the query.
 	freshCtx := d.se.ContextFactory(
-		d.gmsCtx.Context,
+		ctx,
 		gms.WithSession(d.gmsCtx.Session),
 		gms.WithPid(globalQueryPid.Add(1)),
 		gms.WithProcessList(d.gmsCtx.ProcessList),
@@ -168,7 +174,13 @@ func (d *DoltConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 		return nil, fmt.Errorf("isolation level not supported '%d'", opts.Isolation)
 	}
 
-	_, _, _, err := d.se.Query(d.gmsCtx, "BEGIN;")
+	queryCtx, err := d.beginQuery(ctx, "BEGIN;")
+	if err != nil {
+		return nil, translateError(err)
+	}
+	defer d.endQuery(queryCtx)
+
+	_, _, _, err = d.se.Query(queryCtx, "BEGIN;")
 	if err != nil {
 		return nil, translateError(err)
 	}
@@ -177,4 +189,52 @@ func (d *DoltConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 		se:     d.se,
 		gmsCtx: d.gmsCtx,
 	}, nil
+}
+
+// Ping implements driver.Pinger. It verifies the connection is still alive by
+// executing a lightweight query against the engine.
+func (d *DoltConn) Ping(ctx context.Context) error {
+	queryCtx, err := d.beginQuery(ctx, "SELECT 1")
+	if err != nil {
+		return driver.ErrBadConn
+	}
+	defer d.endQuery(queryCtx)
+	_, itr, _, err := d.se.Query(queryCtx, "SELECT 1")
+	if err != nil {
+		return driver.ErrBadConn
+	}
+	if err := itr.Close(queryCtx); err != nil {
+		return driver.ErrBadConn
+	}
+	return nil
+}
+
+// PrepareContext implements driver.ConnPrepareContext. The supplied context
+// governs the preparation step only; the returned statement inherits the
+// connection's ambient context for its executions.
+func (d *DoltConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	d.gmsCtx.SetQueryTime(time.Now())
+	return d.Prepare(query)
+}
+
+// ExecContext implements driver.ExecerContext.
+func (d *DoltConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	stmt, err := d.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	return stmt.(driver.StmtExecContext).ExecContext(ctx, args)
+}
+
+// QueryContext implements driver.QueryerContext.
+func (d *DoltConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	stmt, err := d.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	// Do not Close stmt here: the rows are still live and the stmt must not be
+	// closed while they are outstanding. doltStmt holds no resources that need
+	// explicit cleanup beyond what doltRows already owns, so it will be GC'd.
+	return stmt.(driver.StmtQueryContext).QueryContext(ctx, args)
 }

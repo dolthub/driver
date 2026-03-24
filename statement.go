@@ -15,7 +15,10 @@
 package embedded
 
 import (
+	"context"
 	"database/sql/driver"
+	"errors"
+	"io"
 	"strconv"
 
 	"github.com/dolthub/vitess/go/vt/sqlparser"
@@ -32,6 +35,8 @@ type doltMultiStmt struct {
 }
 
 var _ driver.Stmt = (*doltMultiStmt)(nil)
+var _ driver.StmtExecContext = (*doltMultiStmt)(nil)
+var _ driver.StmtQueryContext = (*doltMultiStmt)(nil)
 
 func (d doltMultiStmt) Close() error {
 	var retErr error
@@ -48,24 +53,25 @@ func (d doltMultiStmt) NumInput() int {
 	return -1
 }
 
-func (d doltMultiStmt) Exec(args []driver.Value) (result driver.Result, err error) {
+func (d doltMultiStmt) Exec(args []driver.Value) (driver.Result, error) {
+	return nil, errors.New("Exec called on doltMultiStmt; use ExecContext")
+}
+
+func (d doltMultiStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (result driver.Result, err error) {
 	for _, stmt := range d.stmts {
-		result, err = stmt.Exec(args)
+		result, err = stmt.ExecContext(ctx, args)
 		if err != nil {
-			// If any error occurs, return the error and don't execute any more statements
 			return nil, err
 		}
 	}
-
-	// Otherwise, return the last result, to match the MySQL driver's behavior
 	return result, nil
 }
 
-func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
+func (d doltMultiStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	var ret doltMultiRows
 	for _, stmt := range d.stmts {
 		ret.rowSets = append(ret.rowSets, func() *doltRows {
-			rows, err := stmt.Query(args)
+			rows, err := stmt.QueryContext(ctx, args)
 			if err != nil {
 				return &doltRows{err: err}
 			}
@@ -89,6 +95,10 @@ func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 	return &ret, nil
 }
 
+func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
+	return nil, errors.New("Query called on doltMultiStmt; use QueryContext")
+}
+
 // doltStmt represents a single statement to be executed against a Dolt database.
 type doltStmt struct {
 	conn  *DoltConn
@@ -96,6 +106,8 @@ type doltStmt struct {
 }
 
 var _ driver.Stmt = (*doltStmt)(nil)
+var _ driver.StmtExecContext = (*doltStmt)(nil)
+var _ driver.StmtQueryContext = (*doltStmt)(nil)
 
 // Close closes the statement.
 func (stmt *doltStmt) Close() error {
@@ -107,11 +119,16 @@ func (stmt *doltStmt) NumInput() int {
 	return -1
 }
 
-func argsToBindings(args []driver.Value) (map[string]sqlparser.Expr, error) {
+func namedArgsToBindings(args []driver.NamedValue) (map[string]sqlparser.Expr, error) {
 	bindings := make(map[string]sqlparser.Expr)
-	for i := range args {
-		vIdx := "v" + strconv.FormatInt(int64(i+1), 10)
-		bv, err := sqltypes.BuildBindVariable(args[i])
+	for _, arg := range args {
+		var key string
+		if arg.Name != "" {
+			key = arg.Name
+		} else {
+			key = "v" + strconv.FormatInt(int64(arg.Ordinal), 10)
+		}
+		bv, err := sqltypes.BuildBindVariable(arg.Value)
 		if err != nil {
 			return nil, err
 		}
@@ -119,52 +136,88 @@ func argsToBindings(args []driver.Value) (map[string]sqlparser.Expr, error) {
 		if err != nil {
 			return nil, err
 		}
-		bindings[vIdx], err = sqlparser.ExprFromValue(v)
+		bindings[key], err = sqlparser.ExprFromValue(v)
 		if err != nil {
 			return nil, err
 		}
 	}
-
 	return bindings, nil
 }
 
-// Exec executes a query that doesn't return rows, such as an INSERT or UPDATE.
+// execCore runs the query with the given bindings against the provided gmsCtx.
+func (stmt *doltStmt) execCore(gmsCtx *gms.Context, bindings map[string]sqlparser.Expr) (gms.Schema, gms.RowIter, error) {
+	sch, itr, _, err := stmt.conn.se.GetUnderlyingEngine().QueryWithBindings(gmsCtx, stmt.query, nil, bindings, nil)
+	return sch, itr, err
+}
+
 func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
-	queryCtx, err := stmt.conn.beginQuery(stmt.query)
+	return nil, errors.New("Exec called on doltStmt; use ExecContext")
+}
+
+// ExecContext implements driver.StmtExecContext.
+func (stmt *doltStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
+	queryCtx, err := stmt.conn.beginQuery(ctx, stmt.query)
 	if err != nil {
 		return nil, err
 	}
 	defer stmt.conn.endQuery(queryCtx)
-
-	sch, itr, err := stmt.execWithArgsCtx(queryCtx, args)
+	bindings, err := namedArgsToBindings(args)
+	if err != nil {
+		return nil, err
+	}
+	sch, itr, err := stmt.execCore(queryCtx, bindings)
 	if err != nil {
 		return nil, translateError(err)
 	}
-
 	res := newResult(queryCtx, sch, itr)
 	if res.err != nil {
 		return nil, res.err
 	}
-
 	return res, nil
 }
 
-func (stmt *doltStmt) execWithArgsCtx(ctx *gms.Context, args []driver.Value) (gms.Schema, gms.RowIter, error) {
-	bindings, err := argsToBindings(args)
-	if err != nil {
-		return nil, nil, err
+// makeRows wraps a schema and row iterator in a doltRows, draining non-query
+// result sets (DML, DDL) immediately so their side effects complete before returning.
+func makeRows(gmsCtx *gms.Context, sch gms.Schema, rowIter gms.RowIter) (*doltRows, error) {
+	if !isQueryResultSet(sch) {
+		// Non-query statements (DML, DDL, nil-schema) must be drained immediately so that
+		// their side effects complete before any subsequent statement executes.
+		var drainErr error
+		for {
+			_, err := rowIter.Next(gmsCtx)
+			if err != nil {
+				if err != io.EOF {
+					drainErr = translateError(err)
+				}
+				break
+			}
+		}
+		if err := rowIter.Close(gmsCtx); err != nil && drainErr == nil {
+			drainErr = translateError(err)
+		}
+		return &doltRows{
+			sch:              sch,
+			gmsCtx:           gmsCtx,
+			err:              drainErr,
+			isQueryResultSet: false,
+		}, nil
 	}
 
-	sch, itr, _, err := stmt.conn.se.GetUnderlyingEngine().QueryWithBindings(ctx, stmt.query, nil, bindings, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	return sch, itr, nil
+	return &doltRows{
+		sch:              sch,
+		rowIter:          rowIter,
+		gmsCtx:           gmsCtx,
+		isQueryResultSet: true,
+	}, nil
 }
 
-// Query executes a query that may return rows, such as a SELECT
 func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
-	queryCtx, err := stmt.conn.beginQuery(stmt.query)
+	return nil, errors.New("Query called on doltStmt; use QueryContext")
+}
+
+// QueryContext implements driver.StmtQueryContext.
+func (stmt *doltStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
+	queryCtx, err := stmt.conn.beginQuery(ctx, stmt.query)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +226,12 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 	var rowIter gms.RowIter
 
 	if len(args) != 0 {
-		sch, rowIter, err = stmt.execWithArgsCtx(queryCtx, args)
+		bindings, bindErr := namedArgsToBindings(args)
+		if bindErr != nil {
+			stmt.conn.endQuery(queryCtx)
+			return nil, bindErr
+		}
+		sch, rowIter, err = stmt.execCore(queryCtx, bindings)
 	} else {
 		sch, rowIter, _, err = stmt.conn.se.Query(queryCtx, stmt.query)
 	}
@@ -182,39 +240,23 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 		return nil, translateError(err)
 	}
 
-	// Wrap the result iterator in a peekableRowIter and call Peek() to read the first row from the result iterator.
-	// This is necessary for insert operations, since the insert happens inside the result iterator logic. Without
-	// calling this now, insert statements and some DML statements (e.g. CREATE PROCEDURE) would not be executed yet,
-	// and future statements in a multi-statement query that depend on those results would fail.
-	// If an error does occur, we want that error to be returned in the Next() codepath, not here.
-	peekIter := peekableRowIter{iter: rowIter}
-	row, _ := peekIter.Peek(queryCtx)
-
-	return &doltRows{
-		sch:              sch,
-		rowIter:          &peekIter,
-		conn:             stmt.conn,
-		gmsCtx:           queryCtx,
-		isQueryResultSet: isQueryResultSet(row),
-	}, nil
+	rows, makeErr := makeRows(queryCtx, sch, rowIter)
+	if makeErr != nil {
+		stmt.conn.endQuery(queryCtx)
+		return nil, makeErr
+	}
+	if rows.isQueryResultSet {
+		rows.conn = stmt.conn
+	} else {
+		stmt.conn.endQuery(queryCtx)
+	}
+	return rows, nil
 }
 
-// isQueryResultSet returns true if the specified |row| is a valid result set for a query. If row only contains
-// one column and is an OkResult, or if row has zero columns, then the statement that generated this row was not
-// a query.
-func isQueryResultSet(row gms.Row) bool {
-	// If row is nil, return true since this could still be a valid, empty result set.
-	if row == nil {
-		return true
-	}
-
-	if len(row) == 1 {
-		if _, ok := row[0].(types.OkResult); ok {
-			return false
-		}
-	} else if len(row) == 0 {
-		return false
-	}
-
-	return true
+// isQueryResultSet returns true if the schema indicates the statement produces a SELECT-style
+// result set. Non-query statements (DML, DDL) return types.OkResultSchema; some statements
+// return a nil schema with an empty iterator. Both must be drained eagerly and not exposed
+// to the caller as result sets.
+func isQueryResultSet(sch gms.Schema) bool {
+	return sch != nil && !types.IsOkResultSchema(sch)
 }
