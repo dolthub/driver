@@ -86,6 +86,13 @@ func (d *doltMultiRows) HasNextResultSet() bool {
 // Returns io.EOF if we have run all the queries and there are no
 // result sets to iterate.
 func (d *doltMultiRows) NextResultSet() error {
+	if d.currentRowSet == nil {
+		return io.EOF
+	}
+	// Drain remaining rows before closing, mirroring the behavior of a MySQL
+	// client/server driver which must consume all pending rows on the wire
+	// before the connection can advance to the next result set.
+	d.currentRowSet.drain()
 	err := d.currentRowSet.Close()
 	if err != nil {
 		return err
@@ -146,9 +153,27 @@ func (rows *doltRows) Close() error {
 	return translateError(rows.rowIter.Close(rows.gmsCtx))
 }
 
+// drain consumes all remaining rows in the iterator without converting them.
+// This is used by NextResultSet to mirror MySQL client/server behavior, where
+// the client must consume all pending rows before advancing to the next result set.
+func (rows *doltRows) drain() {
+	if rows.rowIter == nil {
+		return
+	}
+	for {
+		_, err := rows.rowIter.Next(rows.gmsCtx)
+		if err != nil {
+			return
+		}
+	}
+}
+
 // Next is called to populate the next row of data into the provided slice. The provided slice will be the same size as
 // the Columns() are wide. Next returns io.EOF when there are no more rows.
 func (rows *doltRows) Next(dest []driver.Value) error {
+	if rows.rowIter == nil {
+		return io.EOF
+	}
 	nextRow, err := rows.rowIter.Next(rows.gmsCtx)
 	if err != nil {
 		if err == io.EOF {
@@ -194,39 +219,3 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 	return nil
 }
 
-// peekableRowIter wrap another gms.RowIter and allows the caller to peek at results, without disturbing the order
-// that results are returned from the Next() method.
-type peekableRowIter struct {
-	iter  gms.RowIter
-	peeks []gms.Row
-}
-
-var _ gms.RowIter = (*peekableRowIter)(nil)
-
-// Peek returns the next row from this row iterator, without causing that row to be skipped from future calls
-// to Next(). There is no limit on how many rows can be peeked.
-func (p *peekableRowIter) Peek(ctx *gms.Context) (gms.Row, error) {
-	next, err := p.iter.Next(ctx)
-	if err != nil {
-		return nil, err
-	}
-	p.peeks = append(p.peeks, next)
-
-	return next, nil
-}
-
-// Next implements gms.RowIter
-func (p *peekableRowIter) Next(ctx *gms.Context) (gms.Row, error) {
-	if len(p.peeks) > 0 {
-		peek := p.peeks[0]
-		p.peeks = p.peeks[1:]
-		return peek, nil
-	}
-
-	return p.iter.Next(ctx)
-}
-
-// Close implements gms.RowIter
-func (p *peekableRowIter) Close(ctx *gms.Context) error {
-	return p.iter.Close(ctx)
-}

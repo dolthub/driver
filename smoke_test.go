@@ -544,6 +544,74 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 	require.IsType(t, time.Time{}, vals[6])
 }
 
+func TestSleepCancel(t *testing.T) {
+	conn, cleanupFunc := initializeTestDatabaseConnection(t, false)
+	defer cleanupFunc()
+	
+	ctx, cancel := context.WithCancel(t.Context())
+	var rows *sql.Rows
+	var err error
+	done := make(chan struct{})
+	go func() {
+		rows, err = conn.QueryContext(ctx, "select sleep(60)")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(1 * time.Second):
+		require.FailNow(t, "select sleep(60) should return rows quickly.")
+	}
+	require.NoError(t, err)
+	cancel()
+	errCh := make(chan error)
+	go func() {
+		for rows.Next() {
+		}
+		errCh <- rows.Err()
+	}()
+	select {
+	case err = <-errCh:
+	case <-time.After(1 * time.Second):
+		require.FailNow(t, "canceling the query context should have made rows.Next() return quickly.")
+	}
+	require.Error(t, rows.Err())
+	rows.Close()
+	
+	// Connection still works.
+	r := conn.QueryRowContext(t.Context(), "select 3+4")
+	require.NoError(t, r.Err())
+	var i int
+	require.NoError(t, r.Scan(&i))
+	require.Equal(t, 7, i)
+
+	// Canceling the context after the rows.Next call is blocked still unblocks it.
+	ctx, cancel = context.WithCancel(t.Context())
+	rows, err = conn.QueryContext(ctx, "select sleep(60)")
+	require.NoError(t, err)
+	var next bool
+	done = make(chan struct{})
+	go func() {
+		next = rows.Next()
+		close(done)
+	}()
+	select {
+	case <-time.After(128 * time.Millisecond):
+		// This is racey, but in general we are testing the case we want to here...
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(128 * time.Millisecond):
+			require.FailNow(t, "should have quickly finished after canceling the query context.")
+		}
+	case <-done:
+		cancel()
+		require.FailNow(t, "should not have finished rows.Next() until the context was canceled")
+	}
+	require.False(t, next)
+	require.Error(t, rows.Err())
+	rows.Close()
+}
+
 // initializeTestDatabaseConnection create a test database called testdb and initialize a database/sql connection
 // using the Dolt driver. The connection, |conn|, is returned, and |cleanupFunc| is a function that the test function
 // should defer in order to properly dispose of test resources.

@@ -27,6 +27,10 @@ import (
 )
 
 var _ driver.Conn = (*DoltConn)(nil)
+var _ driver.Pinger = (*DoltConn)(nil)
+var _ driver.ConnPrepareContext = (*DoltConn)(nil)
+var _ driver.ExecerContext = (*DoltConn)(nil)
+var _ driver.QueryerContext = (*DoltConn)(nil)
 
 // DoltConn is a driver.Conn implementation that represents a connection to a dolt database located on the filesystem
 type DoltConn struct {
@@ -124,4 +128,48 @@ func (d *DoltConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 		se:     d.se,
 		gmsCtx: d.gmsCtx,
 	}, nil
+}
+
+// Ping implements driver.Pinger. It verifies the connection is still alive by
+// executing a lightweight query against the engine.
+func (d *DoltConn) Ping(ctx context.Context) error {
+	gmsCtx := d.gmsCtx.WithContext(ctx)
+	_, itr, _, err := d.se.Query(gmsCtx, "SELECT 1")
+	if err != nil {
+		return driver.ErrBadConn
+	}
+	if err := itr.Close(gmsCtx); err != nil {
+		return driver.ErrBadConn
+	}
+	return nil
+}
+
+// PrepareContext implements driver.ConnPrepareContext. The supplied context
+// governs the preparation step only; the returned statement inherits the
+// connection's ambient context for its executions.
+func (d *DoltConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
+	d.gmsCtx.SetQueryTime(time.Now())
+	return d.Prepare(query)
+}
+
+// ExecContext implements driver.ExecerContext.
+func (d *DoltConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
+	stmt, err := d.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	defer stmt.Close()
+	return stmt.(driver.StmtExecContext).ExecContext(ctx, args)
+}
+
+// QueryContext implements driver.QueryerContext.
+func (d *DoltConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
+	stmt, err := d.Prepare(query)
+	if err != nil {
+		return nil, err
+	}
+	// Do not Close stmt here: the rows are still live and the stmt must not be
+	// closed while they are outstanding. doltStmt holds no resources that need
+	// explicit cleanup beyond what doltRows already owns, so it will be GC'd.
+	return stmt.(driver.StmtQueryContext).QueryContext(ctx, args)
 }
