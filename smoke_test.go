@@ -741,9 +741,6 @@ func TestShowProcesslistAndKill(t *testing.T) {
 	// Step 3: Open a new, concurrent connection (conn2).
 	conn2, err := db.Conn(ctx)
 	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, conn2.Close())
-	})
 
 	// Step 4: Run SELECT SLEEP(60) on conn2 concurrently.
 	sleepErrCh := make(chan error, 1)
@@ -811,6 +808,13 @@ func TestShowProcesslistAndKill(t *testing.T) {
 		}
 	}
 	require.True(t, hasCommandSleep, "the processlist entry for conn2 is in Command = Sleep")
+
+	require.NoError(t, conn2.Close())
+
+	rows, err = conn1.QueryContext(ctx, "show full processlist")
+	require.NoError(t, err)
+	entries = scanEntries(rows)
+	require.Len(t, entries, 1, "conn2 was removed from full processlist when it was closed")
 }
 
 func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (*sql.DB, *sql.Conn) {
