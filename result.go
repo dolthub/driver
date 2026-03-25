@@ -27,7 +27,6 @@ var _ driver.Result = (*doltResult)(nil)
 type doltResult struct {
 	affected int64
 	last     int64
-	err      error
 }
 
 func newResult(gmsCtx *gms.Context, sch gms.Schema, itr gms.RowIter) (*doltResult, error) {
@@ -64,18 +63,10 @@ func newResult(gmsCtx *gms.Context, sch gms.Schema, itr gms.RowIter) (*doltResul
 
 // LastInsertId returns the database's auto-generated ID after, for example, an INSERT into a table with primary key.
 func (result *doltResult) LastInsertId() (int64, error) {
-	if result.err != nil {
-		return 0, result.err
-	}
-
 	return result.last, nil
 }
 
 // RowsAffected returns the number of rows affected by the query.
 func (result *doltResult) RowsAffected() (int64, error) {
-	if result.err != nil {
-		return 0, result.err
-	}
-
 	return result.affected, nil
 }

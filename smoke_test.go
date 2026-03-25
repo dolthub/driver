@@ -45,7 +45,9 @@ var mysqlDsn = "root@tcp(localhost:3306)/?charset=utf8mb4&parseTime=True&loc=Loc
 // TestPreparedStatements tests that values can be plugged into "?" placeholders in queries.
 func TestPreparedStatements(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "create table prepTest (id int, name varchar(256));")
@@ -65,6 +67,9 @@ func TestPreparedStatements(t *testing.T) {
 
 func TestMultiStatements(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "show tables like 'schema_migrations'")
@@ -135,15 +140,15 @@ func TestMultiStatements(t *testing.T) {
 	// error in the second result set. This is the same behavior as the MySQL driver
 	require.False(t, rows.NextResultSet())
 	require.NotNil(t, rows.Err())
-
-	require.NoError(t, conn.Close())
 }
 
 // TestMultiStatementsExecContext tests that using ExecContext to run a multi-statement query works as expected and
 // matches the behavior of the MySQL driver.
 func TestMultiStatementsExecContext(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 	_, err := conn.ExecContext(ctx, "CREATE TABLE example_table (id int, name varchar(256));")
@@ -184,7 +189,9 @@ func TestMultiStatementsExecContext(t *testing.T) {
 // matches the behavior of the MySQL driver.
 func TestMultiStatementsQueryContext(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	// QueryContext returns the results from the FIRST statement executed. This differs from the behavior for ExecContext.
 	ctx := t.Context()
@@ -292,7 +299,9 @@ func TestMultiStatementsQueryContext(t *testing.T) {
 // there is no space between the statement delimiter and the next statement.
 func TestMultiStatementsWithNoSpaces(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	var v int
 	ctx := t.Context()
@@ -321,7 +330,9 @@ func TestMultiStatementsWithNoSpaces(t *testing.T) {
 // This includes statements that are entirely empty, as well as statements that contain only comments.
 func TestMultiStatementsWithEmptyStatements(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	var v int
 	ctx := t.Context()
@@ -363,7 +374,9 @@ func TestMultiStatementsWithEmptyStatements(t *testing.T) {
 
 func TestMultiStatementsStoredProc(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "create procedure p() begin select 1; end; call p(); call p(); call p();")
@@ -404,7 +417,9 @@ func TestMultiStatementsStoredProc(t *testing.T) {
 
 func TestMultiStatementsTrigger(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 	res, err := conn.ExecContext(ctx, "create table t (i int primary key, j int);")
@@ -457,7 +472,9 @@ func TestClientFoundRows(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			_, conn := initializeTestDatabaseConnection(t, test.clientFoundRows)
-			defer conn.Close()
+			t.Cleanup(func() {
+				require.NoError(t, conn.Close())
+			})
 			ctx := t.Context()
 
 			res, err := conn.ExecContext(ctx, "create table testtable (id int primary key, name varchar(256))")
@@ -480,6 +497,9 @@ func TestClientFoundRows(t *testing.T) {
 // setting the current time at query execution start.
 func TestQueryContextInitialization(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 	rows, err := conn.QueryContext(ctx, "select NOW()")
@@ -503,14 +523,14 @@ func TestQueryContextInitialization(t *testing.T) {
 	require.False(t, rows.Next())
 	require.NoError(t, rows.Err())
 	require.NoError(t, rows.Close())
-
-	require.NoError(t, conn.Close())
 }
 
 // TestTypes asserts that various MySQL types are returned as the expected Go type by the driver.
 func TestTypes(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 	_, err := conn.ExecContext(ctx, `
@@ -546,8 +566,10 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 
 func TestSleepCancel(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
-	
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
+
 	ctx, cancel := context.WithCancel(t.Context())
 	var rows *sql.Rows
 	var err error
@@ -576,7 +598,7 @@ func TestSleepCancel(t *testing.T) {
 	}
 	require.Error(t, rows.Err())
 	rows.Close()
-	
+
 	// Connection still works.
 	r := conn.QueryRowContext(t.Context(), "select 3+4")
 	require.NoError(t, r.Err())
@@ -618,7 +640,9 @@ func TestSleepCancel(t *testing.T) {
 // the second result set without waiting 60 seconds for the sleep to complete.
 func TestNextResultSetSkipsExpensiveIteration(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 
@@ -672,8 +696,9 @@ func TestNextResultSetSkipsExpensiveIteration(t *testing.T) {
 }
 
 // TestShowProcesslistAndKill tests the SHOW PROCESSLIST and KILL QUERY functionality.
-// It verifies that active connections appear in the processlist with the correct state,
-// and that a running query can be killed while both connections continue to work afterward.
+// It verifies that active connections appear in the processlist with the correct info
+// and command, and that a running query can be killed while both connections continue
+// to work afterward.
 func TestShowProcesslistAndKill(t *testing.T) {
 	ctx := t.Context()
 
@@ -681,27 +706,44 @@ func TestShowProcesslistAndKill(t *testing.T) {
 
 	// Step 1: Create database
 	db, conn1 := initializeTestDatabaseConnectionAt(t, dir, false)
-	defer conn1.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn1.Close())
+	})
+
+	type entry struct {
+		id      int64
+		user    sql.NullString
+		host    sql.NullString
+		dbName  sql.NullString
+		command sql.NullString
+		state   sql.NullString
+		info    sql.NullString
+		tm      sql.NullInt64
+	}
+	scanEntries := func(rows *sql.Rows) []entry {
+		res := make([]entry, 0)
+		for rows.Next() {
+			var e entry
+			require.NoError(t, rows.Scan(&e.id, &e.user, &e.host, &e.dbName, &e.command, &e.tm, &e.state, &e.info))
+			res = append(res, e)
+		}
+		require.NoError(t, rows.Err())
+		require.NoError(t, rows.Close())
+		return res
+	}
 
 	// Step 2: Run SHOW PROCESSLIST on conn1 and assert that exactly one connection is present.
-	var processCount int
 	rows, err := conn1.QueryContext(ctx, "show processlist")
 	require.NoError(t, err)
-	for rows.Next() {
-		var id int64
-		var user, host, dbName, command, state, info sql.NullString
-		var tm sql.NullInt64
-		require.NoError(t, rows.Scan(&id, &user, &host, &dbName, &command, &tm, &state, &info))
-		processCount++
-	}
-	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
-	require.Equal(t, 1, processCount, "expected exactly one connection in processlist before conn2 is opened")
+	entries := scanEntries(rows)
+	require.Len(t, entries, 1, "expected exactly one connection in processlist before conn2 is opened")
 
 	// Step 3: Open a new, concurrent connection (conn2).
 	conn2, err := db.Conn(ctx)
 	require.NoError(t, err)
-	defer conn2.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn2.Close())
+	})
 
 	// Step 4: Run SELECT SLEEP(60) on conn2 concurrently.
 	sleepErrCh := make(chan error, 1)
@@ -718,26 +760,20 @@ func TestShowProcesslistAndKill(t *testing.T) {
 		if pErr != nil {
 			return false
 		}
-		defer pRows.Close()
-		var rowCount int
-		var foundSleep bool
-		for pRows.Next() {
-			var id int64
-			var user, host, dbName, command, state, info sql.NullString
-			var tm sql.NullInt64
-			if scanErr := pRows.Scan(&id, &user, &host, &dbName, &command, &tm, &state, &info); scanErr != nil {
-				return false
-			}
-			rowCount++
-			if info.Valid && strings.EqualFold(strings.TrimSpace(info.String), "select sleep(60)") {
-				sleepConnID = id
+		newEntries := scanEntries(pRows)
+		if len(newEntries) < 2 {
+			return false
+		}
+		foundSleep := false
+		for _, e := range newEntries {
+			if e.info.Valid && strings.EqualFold(strings.TrimSpace(e.info.String), "select sleep(60)") {
+				require.True(t, e.command.Valid)
+				require.True(t, strings.EqualFold(strings.TrimSpace(e.command.String), "query"), "running queries are in command 'Query'")
+				sleepConnID = e.id
 				foundSleep = true
 			}
 		}
-		if pRows.Err() != nil {
-			return false
-		}
-		return rowCount >= 2 && foundSleep
+		return foundSleep
 	}, 5*time.Second, 100*time.Millisecond, "expected both connections to appear in processlist with sleep query running")
 
 	require.NotZero(t, sleepConnID, "expected to find the connection ID of the sleeping query")
@@ -763,6 +799,18 @@ func TestShowProcesslistAndKill(t *testing.T) {
 	row = conn2.QueryRowContext(ctx, "select 1")
 	require.NoError(t, row.Scan(&v))
 	require.Equal(t, 1, v)
+
+	rows, err = conn1.QueryContext(ctx, "show full processlist")
+	require.NoError(t, err)
+	entries = scanEntries(rows)
+	require.Len(t, entries, 2, "both connections show up in full processlist")
+	hasCommandSleep := false
+	for _, e := range entries {
+		if e.command.Valid && strings.EqualFold(strings.TrimSpace(e.command.String), "sleep") {
+			hasCommandSleep = true
+		}
+	}
+	require.True(t, hasCommandSleep, "the processlist entry for conn2 is in Command = Sleep")
 }
 
 func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (*sql.DB, *sql.Conn) {
@@ -786,25 +834,26 @@ func openTestDatabaseConnectionAt(t *testing.T, dir string, clientFoundRows bool
 		query["clientfoundrows"] = []string{"true"}
 	}
 	dsn := url.URL{Scheme: "file", Path: encodeDir(dir), RawQuery: query.Encode()}
-	db, err := sql.Open(DoltDriverName, dsn.String())
+	doltDB, err := sql.Open(DoltDriverName, dsn.String())
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		db.Close()
+		doltDB.Close()
 	})
-	require.NoError(t, db.PingContext(ctx))
+	require.NoError(t, doltDB.PingContext(ctx))
 	if runTestsAgainstMySQL {
 		dsn := mysqlDsn
 		if clientFoundRows {
 			dsn += "&clientFoundRows=true"
 		}
-		db, err = sql.Open("mysql", dsn)
+		mysqlDB, err := sql.Open("mysql", dsn)
 		require.NoError(t, err)
 		t.Cleanup(func() {
-			db.Close()
+			mysqlDB.Close()
 		})
-		require.NoError(t, db.PingContext(ctx))
+		require.NoError(t, mysqlDB.PingContext(ctx))
+		return mysqlDB
 	}
-	return db
+	return doltDB
 }
 
 func initializeTestDatabaseConnectionAt(t *testing.T, dir string, clientFoundRows bool) (*sql.DB, *sql.Conn) {
@@ -867,7 +916,9 @@ func encodeDir(dir string) string {
 // TestTransactionCommit tests that transactions can be committed successfully and changes are persisted.
 func TestTransactionCommit(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 
@@ -894,7 +945,9 @@ func TestTransactionCommit(t *testing.T) {
 // TestTransactionRollback tests that transactions can be rolled back and changes are discarded.
 func TestTransactionRollback(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 
@@ -924,7 +977,9 @@ func TestTransactionRollback(t *testing.T) {
 // are all committed or rolled back together.
 func TestTransactionMultipleOperations(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 
@@ -969,7 +1024,9 @@ func TestTransactionMultipleOperations(t *testing.T) {
 // TestBeginTxUnsupportedIsolationLevel tests that BeginTx returns an error for unsupported isolation levels.
 func TestBeginTxUnsupportedIsolationLevel(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
-	defer conn.Close()
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+	})
 
 	ctx := t.Context()
 
@@ -985,6 +1042,9 @@ func TestBeginTxUnsupportedIsolationLevel(t *testing.T) {
 // own copy of the files. Closing the database should close those
 // files.
 func TestOpenFDsAfterClose(t *testing.T) {
+	if runTestsAgainstMySQL {
+		t.SkipNow()
+	}
 	dir := t.TempDir()
 	nomsDir, err := filepath.EvalSymlinks(dir)
 	require.NoError(t, err)
@@ -1035,6 +1095,9 @@ func TestOpenFDsAfterClose(t *testing.T) {
 }
 
 func TestBranchSelectedOnConnectionReuse(t *testing.T) {
+	if runTestsAgainstMySQL {
+		t.SkipNow()
+	}
 	db, conn := initializeTestDatabaseConnection(t, false)
 
 	ctx := t.Context()
@@ -1059,7 +1122,7 @@ func TestBranchSelectedOnConnectionReuse(t *testing.T) {
 	require.NoError(t, rows.Close())
 	require.Equal(t, "new_branch", newBranch)
 
-	conn.Close()
+	require.NoError(t, conn.Close())
 
 	conn, err = db.Conn(ctx)
 	require.NoError(t, err)
@@ -1102,7 +1165,7 @@ func TestDatabaseSelectedOnConnectionReuse(t *testing.T) {
 	require.NoError(t, rows.Close())
 	require.Equal(t, "new_database", newDatabase)
 
-	conn.Close()
+	require.NoError(t, conn.Close())
 
 	conn, err = db.Conn(ctx)
 	require.NoError(t, err)

@@ -110,6 +110,8 @@ func (d *DoltConn) beginQuery(ctx context.Context, query string) (*gms.Context, 
 	gms.WithPid(globalQueryPid.Add(1))(res) // Unconventional; *Context.WithPid() does not exist yet.
 
 	// If an existing query might still be running, kill it.
+	// Removing it from the ProcessList also cancels the
+	// context associated with the query.
 	if d.activeQueryCtx != nil {
 		if res.ProcessList != nil {
 			res.ProcessList.EndQuery(d.activeQueryCtx)
@@ -176,7 +178,14 @@ func (d *DoltConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 	}
 
 	return &doltTx{
-		ctx:  ctx,
+		// doltTx inherits the raw Context of this connection.
+		// The ctx given in this BeginTx call being canceled
+		// should not cause future Commit() or Rollback()
+		// calls on the transaction to fail. database/sql is
+		// responsible for the responding to the actual
+		// transaction context lifecycle and it will make
+		// appropriate callbacks to our driver.Tx instance.
+		ctx:  d.gmsCtx.Context,
 		conn: d,
 	}, nil
 }
