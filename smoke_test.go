@@ -818,11 +818,7 @@ func TestShowProcesslistAndKill(t *testing.T) {
 }
 
 func initializeTestDatabaseConnection(t *testing.T, clientFoundRows bool) (*sql.DB, *sql.Conn) {
-	dir, err := os.MkdirTemp("", "dolthub-driver-tests-db*")
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		os.RemoveAll(dir)
-	})
+	dir := t.TempDir()
 	return initializeTestDatabaseConnectionAt(t, dir, clientFoundRows)
 }
 

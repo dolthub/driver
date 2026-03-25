@@ -16,7 +16,6 @@ package embedded
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"database/sql"
@@ -94,11 +93,7 @@ func TestGorm(t *testing.T) {
 	createTime1 := time.Now().UTC().Truncate(time.Microsecond)
 	updateTime1 := createTime1.Add(time.Hour)
 
-	dir, err := os.MkdirTemp("", "dolthub-driver-tests-db*")
-	require.NoError(t, err)
-	defer func() {
-		os.RemoveAll(dir)
-	}()
+	dir := t.TempDir()
 
 	var AllModels = []any{&User{}, &XDFirmware{}, &Item{}}
 
