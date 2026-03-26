@@ -16,7 +16,6 @@ package embedded
 
 import (
 	"fmt"
-	"os"
 	"testing"
 
 	"database/sql"
@@ -90,19 +89,11 @@ type XDFirmware struct {
 }
 
 func TestGorm(t *testing.T) {
-	// disable metrics during test runs
-	// no need to set it back to false since no test should have it set to true
-	metricsDisabled.Store(true)
-
 	// Dolt and MySQL truncate to microseconds
 	createTime1 := time.Now().UTC().Truncate(time.Microsecond)
 	updateTime1 := createTime1.Add(time.Hour)
 
-	dir, err := os.MkdirTemp("", "dolthub-driver-tests-db*")
-	require.NoError(t, err)
-	defer func() {
-		os.RemoveAll(dir)
-	}()
+	dir := t.TempDir()
 
 	var AllModels = []any{&User{}, &XDFirmware{}, &Item{}}
 

@@ -31,8 +31,8 @@ type RuneStack struct {
 	chars []rune
 }
 
-// NewByteStack returns a new RuneStack object
-func NewByteStack() *RuneStack {
+// NewRuneStack returns a new RuneStack object
+func NewRuneStack() *RuneStack {
 	return &RuneStack{chars: make([]rune, 0, 64)}
 }
 
@@ -98,7 +98,7 @@ func (qs *QuerySplitter) HasMore() bool {
 }
 
 func parseNext(queries string) (int, error) {
-	openStack := NewByteStack()
+	openStack := NewRuneStack()
 
 	var prevCh rune
 	for pos, ch := range queries {

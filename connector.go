@@ -51,7 +51,20 @@ func newLocalContext(se *engine.SqlEngine, ctx context.Context) (*gmssql.Context
 	if newLocalContextForConnector != nil {
 		return newLocalContextForConnector(se, ctx)
 	}
-	return se.NewLocalContext(ctx)
+	baseSession := gmssql.NewBaseSession()
+	doltSession, err := se.NewDoltSession(ctx, baseSession)
+	if err != nil {
+		return nil, err
+	}
+	pl := se.GetUnderlyingEngine().ProcessList
+	gmsCtx := se.ContextFactory(ctx,
+		gmssql.WithSession(doltSession),
+		gmssql.WithProcessList(pl),
+	)
+	gmsCtx.Session.SetClient(gmssql.Client{User: "root", Address: "%", Capabilities: 0})
+	pl.AddConnection(gmsCtx.Session.ID(), "%")
+	pl.ConnectionReady(gmsCtx.Session)
+	return gmsCtx, nil
 }
 
 // Connector is a database/sql driver connector for embedded Dolt.
@@ -134,10 +147,9 @@ func (c *Connector) Connect(ctx context.Context) (driver.Conn, error) {
 	}
 
 	return &DoltConn{
-		se:         se,
-		gmsCtx:     gmsCtx,
-		DataSource: nil,
-		cfg:        &c.cfg,
+		se:     se,
+		gmsCtx: gmsCtx,
+		cfg:    &c.cfg,
 	}, nil
 }
 

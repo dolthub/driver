@@ -18,12 +18,10 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
-	"io"
 	"strconv"
 
 	"github.com/dolthub/vitess/go/vt/sqlparser"
 
-	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	gms "github.com/dolthub/go-mysql-server/sql"
 	"github.com/dolthub/go-mysql-server/sql/types"
 	"github.com/dolthub/vitess/go/sqltypes"
@@ -71,19 +69,19 @@ func (d doltMultiStmt) ExecContext(ctx context.Context, args []driver.NamedValue
 func (d doltMultiStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
 	var ret doltMultiRows
 	for _, stmt := range d.stmts {
-		ret.rowSets = append(ret.rowSets, func() *doltRows {
+		ret.rowSets = append(ret.rowSets, func() (*doltRows, error) {
 			rows, err := stmt.QueryContext(ctx, args)
 			if err != nil {
-				return &doltRows{err: err}
+				return nil, err
 			}
-			return rows.(*doltRows)
+			return rows.(*doltRows), nil
 		})
 	}
 	for ret.currentIdx = 0; ret.currentIdx < len(ret.rowSets); ret.currentIdx++ {
-		rows := ret.rowSets[ret.currentIdx]()
-		if rows.err != nil {
-			return nil, rows.err
-		} else if rows.isQueryResultSet {
+		rows, err := ret.rowSets[ret.currentIdx]()
+		if err != nil {
+			return nil, err
+		} else if rows.isQueryResultSet() {
 			ret.currentRowSet = rows
 			break
 		} else {
@@ -102,9 +100,8 @@ func (d doltMultiStmt) Query(args []driver.Value) (driver.Rows, error) {
 
 // doltStmt represents a single statement to be executed against a Dolt database.
 type doltStmt struct {
-	se     *engine.SqlEngine
-	gmsCtx *gms.Context
-	query  string
+	conn  *DoltConn
+	query string
 }
 
 var _ driver.Stmt = (*doltStmt)(nil)
@@ -122,6 +119,9 @@ func (stmt *doltStmt) NumInput() int {
 }
 
 func namedArgsToBindings(args []driver.NamedValue) (map[string]sqlparser.Expr, error) {
+	if len(args) == 0 {
+		return nil, nil
+	}
 	bindings := make(map[string]sqlparser.Expr)
 	for _, arg := range args {
 		var key string
@@ -146,67 +146,25 @@ func namedArgsToBindings(args []driver.NamedValue) (map[string]sqlparser.Expr, e
 	return bindings, nil
 }
 
-// execCore runs the query with the given bindings against the provided gmsCtx.
-func (stmt *doltStmt) execCore(gmsCtx *gms.Context, bindings map[string]sqlparser.Expr) (gms.Schema, gms.RowIter, error) {
-	sch, itr, _, err := stmt.se.GetUnderlyingEngine().QueryWithBindings(gmsCtx, stmt.query, nil, bindings, nil)
-	return sch, itr, err
-}
-
 func (stmt *doltStmt) Exec(args []driver.Value) (driver.Result, error) {
 	return nil, errors.New("Exec called on doltStmt; use ExecContext")
 }
 
 // ExecContext implements driver.StmtExecContext.
 func (stmt *doltStmt) ExecContext(ctx context.Context, args []driver.NamedValue) (driver.Result, error) {
-	gmsCtx := stmt.gmsCtx.WithContext(ctx)
 	bindings, err := namedArgsToBindings(args)
 	if err != nil {
 		return nil, err
 	}
-	sch, itr, err := stmt.execCore(gmsCtx, bindings)
+	queryCtx, sch, itr, err := stmt.conn.queryWithBindings(ctx, stmt.query, bindings)
 	if err != nil {
-		return nil, translateError(err)
+		return nil, err
 	}
-	res := newResult(gmsCtx, sch, itr)
-	if res.err != nil {
-		return nil, res.err
+	res, err := newResult(queryCtx, sch, itr)
+	if err != nil {
+		return nil, err
 	}
 	return res, nil
-}
-
-// makeRows wraps a schema and row iterator in a doltRows, draining non-query
-// result sets (DML, DDL) immediately so their side effects complete before returning.
-func makeRows(gmsCtx *gms.Context, sch gms.Schema, rowIter gms.RowIter) (*doltRows, error) {
-	if !isQueryResultSet(sch) {
-		// Non-query statements (DML, DDL, nil-schema) must be drained immediately so that
-		// their side effects complete before any subsequent statement executes.
-		var drainErr error
-		for {
-			_, err := rowIter.Next(gmsCtx)
-			if err != nil {
-				if err != io.EOF {
-					drainErr = translateError(err)
-				}
-				break
-			}
-		}
-		if err := rowIter.Close(gmsCtx); err != nil && drainErr == nil {
-			drainErr = translateError(err)
-		}
-		return &doltRows{
-			sch:              sch,
-			gmsCtx:           gmsCtx,
-			err:              drainErr,
-			isQueryResultSet: false,
-		}, nil
-	}
-
-	return &doltRows{
-		sch:              sch,
-		rowIter:          rowIter,
-		gmsCtx:           gmsCtx,
-		isQueryResultSet: true,
-	}, nil
 }
 
 func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
@@ -215,26 +173,20 @@ func (stmt *doltStmt) Query(args []driver.Value) (driver.Rows, error) {
 
 // QueryContext implements driver.StmtQueryContext.
 func (stmt *doltStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (driver.Rows, error) {
-	gmsCtx := stmt.gmsCtx.WithContext(ctx)
-
-	var sch gms.Schema
-	var rowIter gms.RowIter
-	var err error
-
-	if len(args) != 0 {
-		bindings, bindErr := namedArgsToBindings(args)
-		if bindErr != nil {
-			return nil, bindErr
-		}
-		sch, rowIter, err = stmt.execCore(gmsCtx, bindings)
-	} else {
-		sch, rowIter, _, err = stmt.se.Query(gmsCtx, stmt.query)
+	bindings, bindErr := namedArgsToBindings(args)
+	if bindErr != nil {
+		return nil, bindErr
 	}
+	queryCtx, sch, rowIter, err := stmt.conn.queryWithBindings(ctx, stmt.query, bindings)
 	if err != nil {
-		return nil, translateError(err)
+		return nil, err
 	}
-
-	return makeRows(gmsCtx, sch, rowIter)
+	return &doltRows{
+		sch:     sch,
+		rowIter: rowIter,
+		gmsCtx:  queryCtx,
+		conn:    stmt.conn,
+	}, nil
 }
 
 // isQueryResultSet returns true if the schema indicates the statement produces a SELECT-style

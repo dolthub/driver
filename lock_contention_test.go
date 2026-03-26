@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"net/url"
-	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -37,11 +36,7 @@ func TestMultiDBLockContention(t *testing.T) {
 		t.Skip("skipping on Windows: file handle cleanup is racey with t.TempDir()")
 	}
 
-	metricsDisabled.Store(true)
-
-	rootDir, err := os.MkdirTemp("", "TestMultiDBLockContention")
-	require.NoError(t, err)
-	defer os.RemoveAll(rootDir)
+	rootDir := t.TempDir()
 
 	ctx := context.Background()
 
