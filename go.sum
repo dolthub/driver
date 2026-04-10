@@ -331,8 +331,8 @@ github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12 h1:I
 github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12/go.mod h1:rN7X8BHwkjPcfMQQ2QTAq/xM3leUSGLfb+1Js7Y6TVo=
 github.com/dolthub/dolt-mcp v0.3.4 h1:AyG5cw+fNWXDHXujtQnqUPZrpWtPg6FN6yYtjv1pP44=
 github.com/dolthub/dolt-mcp v0.3.4/go.mod h1:bCZ7KHvDYs+M0e+ySgmGiNvLhcwsN7bbf5YCyillLrk=
-github.com/dolthub/dolt/go v0.40.5-0.20260410214018-29e9eb64790a h1:4QB5axwOKEUw2m2ngSScwdhPKs2ruWmZPB+Jyu8SY0A=
-github.com/dolthub/dolt/go v0.40.5-0.20260410214018-29e9eb64790a/go.mod h1:tuNFIG4p27J8ZIm4afDJwUZlrJXbNz3fyRyOSw2Ogx8=
+github.com/dolthub/dolt/go v0.40.5-0.20260410231933-91938a776b02 h1:Qk40Pzvp/aQdxtPpU0N6Zhez/LMShNyQipcwDTTNDWU=
+github.com/dolthub/dolt/go v0.40.5-0.20260410231933-91938a776b02/go.mod h1:tuNFIG4p27J8ZIm4afDJwUZlrJXbNz3fyRyOSw2Ogx8=
 github.com/dolthub/eventsapi_schema v0.0.0-20260310172945-37a9265ade69 h1:JShhbqMw26nKx3pqqu/cFxOpzBkN+4elVhzuUfgDw2k=
 github.com/dolthub/eventsapi_schema v0.0.0-20260310172945-37a9265ade69/go.mod h1:SSLraQS/jGLYFgff3vuZ+JbVUct6vyEeMzjLBqWqoyM=
 github.com/dolthub/flatbuffers v1.13.0-dh.1 h1:OWJdaPep22N52O/0xsUevxJ6Qfw1M2txCjZPOdjXybE=
