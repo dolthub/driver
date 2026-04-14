@@ -84,7 +84,7 @@ func TestMultiDBLockContention(t *testing.T) {
 	rootDB2 := sql.OpenDB(rootConnector2)
 
 	err = rootDB2.PingContext(ctx)
-	assert.Error(t, err, "expected an error due to lock contention, not a panic")
+	assert.Error(t, err, "expected an error due to lock contention")
 
 	rootDB2.Close()
 	_ = rootConnector2.Close()

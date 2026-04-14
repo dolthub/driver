@@ -4,7 +4,7 @@ go 1.25.6
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260414232131-eb7b5998d384
+	github.com/dolthub/dolt/go v0.40.5-0.20260414234225-265a37563b27
 	github.com/dolthub/eventsapi_schema v0.0.0-20260310172945-37a9265ade69
 	github.com/dolthub/go-mysql-server v0.20.1-0.20260412215059-d7fc9477f4b7
 	github.com/dolthub/vitess v0.0.0-20260309181228-a99af9c518ab
@@ -169,5 +169,3 @@ require (
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-replace github.com/google/flatbuffers => github.com/dolthub/flatbuffers v1.13.0-dh.1
