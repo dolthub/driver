@@ -77,7 +77,7 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	}
 
 	// fs already switched to dir, so passing "." as a path
-	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", version)
+	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", version, seCfg.DBLoadParams)
 	if err != nil {
 		return nil, err
 	}
@@ -118,6 +118,7 @@ func LoadMultiEnvFromDir(
 	cfg config.ReadWriteConfig,
 	fs filesys.Filesys,
 	path, version string,
+	dbLoadParams map[string]any,
 ) (*env.MultiRepoEnv, error) {
 
 	multiDbDirFs, err := fs.WithWorkingDir(path)
@@ -125,5 +126,5 @@ func LoadMultiEnvFromDir(
 		return nil, errhand.VerboseErrorFromError(err)
 	}
 
-	return env.MultiEnvForConfigAndDirectory(ctx, cfg, multiDbDirFs)
+	return env.MultiEnvForConfigAndDirectory(ctx, cfg, multiDbDirFs, dbLoadParams)
 }

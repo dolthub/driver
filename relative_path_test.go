@@ -48,12 +48,12 @@ func TestLoadMultiEnvFromDirRelativePath(t *testing.T) {
 	require.NoError(t, err)
 
 	// With the fix, openSqlEngine passes "." since fs is already at dbDir.
-	_, err = LoadMultiEnvFromDir(context.Background(), cfg, fs, ".", "0.40.17")
+	_, err = LoadMultiEnvFromDir(context.Background(), cfg, fs, ".", "0.40.17", nil)
 	require.NoError(t, err)
 
 	// Before the fix, the relative path would be applied again, doubling it.
 	// This should fail because <dbDir>/data/myapp does not exist.
-	_, err = LoadMultiEnvFromDir(context.Background(), cfg, fs, "data/myapp", "0.40.17")
+	_, err = LoadMultiEnvFromDir(context.Background(), cfg, fs, "data/myapp", "0.40.17", nil)
 	require.Error(t, err, "applying the relative directory twice should fail because the doubled path does not exist")
 }
 
@@ -106,12 +106,12 @@ func TestConnectorRelativePathPassesDot(t *testing.T) {
 
 	// The connector roots fs at ./data/myapp. With the fix, openSqlEngine
 	// passes "." to LoadMultiEnvFromDir, which should work.
-	_, err = LoadMultiEnvFromDir(context.Background(), doltCfg, capturedFs, ".", "0.40.17")
+	_, err = LoadMultiEnvFromDir(context.Background(), doltCfg, capturedFs, ".", "0.40.17", nil)
 	require.NoError(t, err)
 
 	// Without the fix, the original dir ("./data/myapp") would be passed
 	// again, doubling the path to ./data/myapp/data/myapp which doesn't exist.
-	_, err = LoadMultiEnvFromDir(context.Background(), doltCfg, capturedFs, cfg.Directory, "0.40.17")
+	_, err = LoadMultiEnvFromDir(context.Background(), doltCfg, capturedFs, cfg.Directory, "0.40.17", nil)
 	require.Error(t, err, "re-applying the relative directory should fail because the doubled path does not exist")
 
 	require.NoError(t, c.Close())
