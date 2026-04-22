@@ -1,6 +1,6 @@
 module github.com/dolthub/driver
 
-go 1.25.6
+go 1.26.2
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
