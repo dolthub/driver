@@ -36,12 +36,20 @@ type doltMultiRows struct {
 }
 
 var _ driver.RowsNextResultSet = (*doltMultiRows)(nil)
+var _ driver.RowsColumnTypeDatabaseTypeName = (*doltMultiRows)(nil)
 
 func (d *doltMultiRows) Columns() []string {
 	if d.currentRowSet == nil {
 		return nil
 	}
 	return d.currentRowSet.Columns()
+}
+
+func (d *doltMultiRows) ColumnTypeDatabaseTypeName(i int) string {
+	if d.currentRowSet == nil {
+		return ""
+	}
+	return d.currentRowSet.ColumnTypeDatabaseTypeName(i)
 }
 
 // Close implements the driver.Rows interface. When Close is called on
@@ -124,6 +132,15 @@ type doltRows struct {
 }
 
 var _ driver.Rows = (*doltRows)(nil)
+var _ driver.RowsColumnTypeDatabaseTypeName = (*doltRows)(nil)
+
+// ColumnTypeDatabaseTypeName returns the database system type name for column i.
+func (rows *doltRows) ColumnTypeDatabaseTypeName(i int) string {
+	if i >= 0 && i < len(rows.sch) {
+		return rows.sch[i].Type.String()
+	}
+	return ""
+}
 
 // Columns returns the names of the columns. The number of columns of the result is inferred from the length of the
 // slice. If a particular column name isn't known, an empty string should be returned for that entry.
