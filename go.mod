@@ -4,9 +4,9 @@ go 1.26.2
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260507231811-577c666cc34c
+	github.com/dolthub/dolt/go v0.40.5-0.20260514234014-bc7196366d1e
 	github.com/dolthub/eventsapi_schema v0.0.0-20260310172945-37a9265ade69
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260507202550-43d6daf5958b
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260513232454-bbbd50eb8e47
 	github.com/dolthub/vitess v0.0.0-20260505163811-77e5224be390
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
@@ -62,6 +62,7 @@ require (
 	github.com/bcicen/jstream v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 // indirect
+	github.com/cockroachdb/apd/v3 v3.2.3 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/denisbrodbeck/machineid v1.0.1 // indirect
 	github.com/dolthub/aws-sdk-go-ini-parser v0.0.0-20250305001723-2821c37f6c12 // indirect
@@ -119,7 +120,6 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sergi/go-diff v1.3.1 // indirect
-	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/sony/gobreaker v0.5.0 // indirect
