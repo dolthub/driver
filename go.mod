@@ -1,4 +1,4 @@
-module github.com/dolthub/driver
+module github.com/dolthub/driver/v2
 
 go 1.26.2
 
