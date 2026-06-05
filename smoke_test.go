@@ -564,6 +564,202 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 	require.IsType(t, time.Time{}, vals[6])
 }
 
+// TestAdaptiveEncoding exercises the adaptive encoding read path for TEXT, BLOB, and JSON
+// columns. Dolt stores these "adaptive" types either inline in the row tuple or out-of-band
+// as an address, deciding per-row based on the total tuple size: once a row's inline size
+// exceeds the tuple length target (2048 bytes), the largest adaptive fields are spilled
+// out-of-band. Out-of-band values are returned by the row iterator as values that must be
+// dereferenced against the value store via ValueContext, which is the path rows.go handles.
+//
+// This test creates a table with one column of each adaptive type and inserts rows covering
+// every combination of small (inline) and large (out-of-band) values, plus an all-NULL row,
+// then queries them back and asserts the values round-trip exactly.
+func TestAdaptiveEncoding(t *testing.T) {
+	dir := t.TempDir()
+	db, conn := initializeTestDatabaseConnectionAt(t, dir, false)
+
+	ctx := t.Context()
+
+	_, err := conn.ExecContext(ctx, `
+create table adaptive (
+	id  int primary key,
+	txt TEXT,
+	blb BLOB,
+	jsn JSON
+);`)
+	require.NoError(t, err)
+
+	// largeText, largeBlob, and largeJSON each produce a value comfortably larger than the
+	// 2048 byte tuple length target, so any row containing one is guaranteed to spill that
+	// field out-of-band. The content is keyed off |id| so we can assert exact round-tripping
+	// rather than just matching lengths.
+	largeText := func(id int) string {
+		seed := fmt.Sprintf("row-%d-text|", id)
+		var sb strings.Builder
+		for sb.Len() < 16384 {
+			sb.WriteString(seed)
+		}
+		return sb.String()[:16384]
+	}
+	largeBlob := func(id int) []byte {
+		out := make([]byte, 16384)
+		for i := range out {
+			out[i] = byte(id + i)
+		}
+		return out
+	}
+	largeJSON := func(id int) string {
+		var sb strings.Builder
+		fmt.Fprintf(&sb, `{"id": %d, "size": "large", "data": [`, id)
+		for i := 0; i < 4096; i++ {
+			if i > 0 {
+				sb.WriteByte(',')
+			}
+			fmt.Fprintf(&sb, "%d", i)
+		}
+		sb.WriteString("]}")
+		return sb.String()
+	}
+
+	smallText := func(id int) string { return fmt.Sprintf("small-text-%d", id) }
+	smallBlob := func(id int) []byte { return []byte(fmt.Sprintf("small-blob-%d", id)) }
+	smallJSON := func(id int) string { return fmt.Sprintf(`{"id": %d, "size": "small"}`, id) }
+
+	type row struct {
+		id        int
+		textLarge bool
+		blobLarge bool
+		jsonLarge bool
+		isNull    bool
+	}
+
+	// All eight small/large combinations across the three adaptive types, plus an all-NULL row.
+	rows := []row{
+		{id: 1, textLarge: false, blobLarge: false, jsonLarge: false},
+		{id: 2, textLarge: true, blobLarge: false, jsonLarge: false},
+		{id: 3, textLarge: false, blobLarge: true, jsonLarge: false},
+		{id: 4, textLarge: false, blobLarge: false, jsonLarge: true},
+		{id: 5, textLarge: true, blobLarge: true, jsonLarge: false},
+		{id: 6, textLarge: true, blobLarge: false, jsonLarge: true},
+		{id: 7, textLarge: false, blobLarge: true, jsonLarge: true},
+		{id: 8, textLarge: true, blobLarge: true, jsonLarge: true},
+		{id: 9, isNull: true},
+	}
+
+	// expected holds the values we expect to read back for each row.
+	type expected struct {
+		txt any // string or nil
+		blb any // []byte or nil
+		jsn any // JSON string or nil
+	}
+	n := 32
+	want := make(map[int]expected, len(rows)*n)
+
+	for i := range n {
+		for _, r := range rows {
+			if r.isNull {
+				_, err := conn.ExecContext(ctx,
+					"insert into adaptive (id, txt, blb, jsn) values (?, ?, ?, ?)",
+					r.id+(i*len(rows)), nil, nil, nil)
+				require.NoError(t, err)
+				want[r.id+(i*len(rows))] = expected{txt: nil, blb: nil, jsn: nil}
+				continue
+			}
+
+			txt := smallText(r.id)
+			if r.textLarge {
+				txt = largeText(r.id)
+			}
+			blb := smallBlob(r.id)
+			if r.blobLarge {
+				blb = largeBlob(r.id)
+			}
+			jsn := smallJSON(r.id)
+			if r.jsonLarge {
+				jsn = largeJSON(r.id)
+			}
+
+			_, err := conn.ExecContext(ctx,
+				"insert into adaptive (id, txt, blb, jsn) values (?, ?, ?, ?)",
+				r.id+(i*len(rows)), txt, blb, jsn)
+			require.NoError(t, err)
+			want[r.id+(i*len(rows))] = expected{txt: txt, blb: blb, jsn: jsn}
+		}
+	}
+
+	// verify reads every row back over |conn| and asserts exact round-tripping. Large fields
+	// take the out-of-band ValueContext read path; small fields are inline. Both must produce
+	// identical values.
+	verify := func(t *testing.T, conn *sql.Conn) {
+		sqlRows, err := conn.QueryContext(ctx, "select id, txt, blb, jsn from adaptive order by id")
+		require.NoError(t, err)
+
+		seen := 0
+		for sqlRows.Next() {
+			var id int
+			var txt sql.NullString
+			var blb []byte
+			var jsn sql.NullString
+			require.NoError(t, sqlRows.Scan(&id, &txt, &blb, &jsn))
+
+			exp, ok := want[id]
+			require.True(t, ok, "unexpected row id %d", id)
+
+			if exp.txt == nil {
+				require.False(t, txt.Valid, "row %d: expected NULL txt", id)
+			} else {
+				require.True(t, txt.Valid, "row %d: expected non-NULL txt", id)
+				require.Equal(t, exp.txt, txt.String, "row %d: txt mismatch", id)
+			}
+
+			if exp.blb == nil {
+				require.Nil(t, blb, "row %d: expected NULL blb", id)
+			} else {
+				require.Equal(t, exp.blb, blb, "row %d: blb mismatch", id)
+			}
+
+			if exp.jsn == nil {
+				require.False(t, jsn.Valid, "row %d: expected NULL jsn", id)
+			} else {
+				require.True(t, jsn.Valid, "row %d: expected non-NULL jsn", id)
+				// Compare JSON semantically, since the server re-serializes (e.g. whitespace) it.
+				require.JSONEq(t, exp.jsn.(string), jsn.String, "row %d: jsn mismatch", id)
+			}
+			seen++
+		}
+		require.NoError(t, sqlRows.Err())
+		require.NoError(t, sqlRows.Close())
+		require.Equal(t, len(rows)*n, seen, "expected to read back every inserted row")
+
+		// Also exercise filtered reads that return only a subset, mixing inline and out-of-band
+		// values, to ensure the read path works outside of a full table scan.
+		requireResults(t, conn, "select id from adaptive where id in (2, 8) order by id",
+			[][]any{{2}, {8}})
+	}
+
+	// First, read the values back over the original connection.
+	verify(t, conn)
+
+	// Now close the connection and the database entirely, then open a fresh sql.DB against the
+	// same directory and re-read. This forces the adaptive values (including out-of-band
+	// addresses) to be reloaded from the on-disk value store rather than served from any
+	// in-memory state held by the original handle.
+	require.NoError(t, conn.Close())
+	require.NoError(t, db.Close())
+
+	db2 := openTestDatabaseConnectionAt(t, dir, false)
+	conn2, err := db2.Conn(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn2.Close())
+	})
+
+	_, err = conn2.ExecContext(ctx, "use testdb")
+	require.NoError(t, err)
+
+	verify(t, conn2)
+}
+
 func TestSleepCancel(t *testing.T) {
 	_, conn := initializeTestDatabaseConnection(t, false)
 	t.Cleanup(func() {

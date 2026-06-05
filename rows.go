@@ -15,6 +15,7 @@
 package embedded
 
 import (
+	"context"
 	"database/sql/driver"
 	"errors"
 	"fmt"
@@ -212,9 +213,17 @@ func (rows *doltRows) Next(dest []driver.Value) error {
 	}
 
 	for i := range nextRow {
-		if v, ok := nextRow[i].(driver.Valuer); ok {
+		if v, ok := nextRow[i].(interface {
+			ValueContext(context.Context) (driver.Value, error)
+		}); ok {
+			fmt.Printf("calling ValueContext() on %T\n", nextRow[i])
+			dest[i], err = v.ValueContext(rows.gmsCtx)
+			if err != nil {
+				return fmt.Errorf("error processing column %d: %w", i, err)
+			}
+		} else if v, ok := nextRow[i].(driver.Valuer); ok {
+			fmt.Printf("calling Value() on %T\n", nextRow[i])
 			dest[i], err = v.Value()
-
 			if err != nil {
 				return fmt.Errorf("error processing column %d: %w", i, err)
 			}
