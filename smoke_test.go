@@ -15,12 +15,16 @@
 package embedded
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -564,77 +568,28 @@ insert into testtable values ('b', 'a,c', '{"key": 42}', 'data', 'text', Point(5
 	require.IsType(t, time.Time{}, vals[6])
 }
 
-// TestAdaptiveEncoding exercises the adaptive encoding read path for TEXT, BLOB, and JSON
-// columns. Dolt stores these "adaptive" types either inline in the row tuple or out-of-band
-// as an address, deciding per-row based on the total tuple size: once a row's inline size
-// exceeds the tuple length target (2048 bytes), the largest adaptive fields are spilled
-// out-of-band. Out-of-band values are returned by the row iterator as values that must be
-// dereferenced against the value store via ValueContext, which is the path rows.go handles.
-//
-// This test creates a table with one column of each adaptive type and inserts rows covering
-// every combination of small (inline) and large (out-of-band) values, plus an all-NULL row,
-// then queries them back and asserts the values round-trip exactly.
-func TestAdaptiveEncoding(t *testing.T) {
-	dir := t.TempDir()
-	db, conn := initializeTestDatabaseConnectionAt(t, dir, false)
+// adaptiveHelperEnvKey guards the helper-process test below so it only runs when this test
+// binary is re-executed as a child process by TestAdaptiveEncoding.
+const adaptiveHelperEnvKey = "DOLT_DRIVER_ADAPTIVE_HELPER"
 
-	ctx := t.Context()
+// adaptiveHelperDSNEnvKey carries the DSN of the database the helper process should re-verify.
+const adaptiveHelperDSNEnvKey = "DOLT_DRIVER_ADAPTIVE_DSN"
 
-	_, err := conn.ExecContext(ctx, `
-create table adaptive (
-	id  int primary key,
-	txt TEXT,
-	blb BLOB,
-	jsn JSON
-);`)
-	require.NoError(t, err)
+// adaptiveRow describes one row inserted by TestAdaptiveEncoding. The values are entirely
+// determined by |id| and these flags, so the helper process can recompute the expected
+// values without any data being passed across the process boundary.
+type adaptiveRow struct {
+	id        int
+	textLarge bool
+	blobLarge bool
+	jsonLarge bool
+	isNull    bool
+}
 
-	// largeText, largeBlob, and largeJSON each produce a value comfortably larger than the
-	// 2048 byte tuple length target, so any row containing one is guaranteed to spill that
-	// field out-of-band. The content is keyed off |id| so we can assert exact round-tripping
-	// rather than just matching lengths.
-	largeText := func(id int) string {
-		seed := fmt.Sprintf("row-%d-text|", id)
-		var sb strings.Builder
-		for sb.Len() < 16384 {
-			sb.WriteString(seed)
-		}
-		return sb.String()[:16384]
-	}
-	largeBlob := func(id int) []byte {
-		out := make([]byte, 16384)
-		for i := range out {
-			out[i] = byte(id + i)
-		}
-		return out
-	}
-	largeJSON := func(id int) string {
-		var sb strings.Builder
-		fmt.Fprintf(&sb, `{"id": %d, "size": "large", "data": [`, id)
-		for i := 0; i < 4096; i++ {
-			if i > 0 {
-				sb.WriteByte(',')
-			}
-			fmt.Fprintf(&sb, "%d", i)
-		}
-		sb.WriteString("]}")
-		return sb.String()
-	}
-
-	smallText := func(id int) string { return fmt.Sprintf("small-text-%d", id) }
-	smallBlob := func(id int) []byte { return []byte(fmt.Sprintf("small-blob-%d", id)) }
-	smallJSON := func(id int) string { return fmt.Sprintf(`{"id": %d, "size": "small"}`, id) }
-
-	type row struct {
-		id        int
-		textLarge bool
-		blobLarge bool
-		jsonLarge bool
-		isNull    bool
-	}
-
-	// All eight small/large combinations across the three adaptive types, plus an all-NULL row.
-	rows := []row{
+// adaptiveRows is the fixed set of rows exercised by TestAdaptiveEncoding: all eight
+// small/large combinations across the three adaptive types, plus an all-NULL row.
+func adaptiveRows() []adaptiveRow {
+	return []adaptiveRow{
 		{id: 1, textLarge: false, blobLarge: false, jsonLarge: false},
 		{id: 2, textLarge: true, blobLarge: false, jsonLarge: false},
 		{id: 3, textLarge: false, blobLarge: true, jsonLarge: false},
@@ -645,116 +600,373 @@ create table adaptive (
 		{id: 8, textLarge: true, blobLarge: true, jsonLarge: true},
 		{id: 9, isNull: true},
 	}
+}
 
-	// expected holds the values we expect to read back for each row.
-	type expected struct {
-		txt any // string or nil
-		blb any // []byte or nil
-		jsn any // JSON string or nil
+// adaptiveLargeText, adaptiveLargeBlob, and adaptiveLargeJSON each produce a value comfortably
+// larger than the 2048 byte tuple length target, so any row containing one is guaranteed to
+// spill that field out-of-band. The content is keyed off |id| so we can assert exact
+// round-tripping rather than just matching lengths.
+func adaptiveLargeText(id int) string {
+	seed := fmt.Sprintf("row-%d-text|", id)
+	var sb strings.Builder
+	for sb.Len() < 16384 {
+		sb.WriteString(seed)
 	}
-	want := make(map[int]expected, len(rows))
+	return sb.String()[:16384]
+}
 
+func adaptiveLargeBlob(id int) []byte {
+	out := make([]byte, 16384)
+	for i := range out {
+		out[i] = byte(id + i)
+	}
+	return out
+}
+
+func adaptiveLargeJSON(id int) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, `{"id": %d, "size": "large", "data": [`, id)
+	for i := 0; i < 4096; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		fmt.Fprintf(&sb, "%d", i)
+	}
+	sb.WriteString("]}")
+	return sb.String()
+}
+
+func adaptiveSmallText(id int) string { return fmt.Sprintf("small-text-%d", id) }
+func adaptiveSmallBlob(id int) []byte { return []byte(fmt.Sprintf("small-blob-%d", id)) }
+func adaptiveSmallJSON(id int) string { return fmt.Sprintf(`{"id": %d, "size": "small"}`, id) }
+
+// adaptiveExpected holds the values we expect to read back for a row.
+type adaptiveExpected struct {
+	txt any // string or nil
+	blb any // []byte or nil
+	jsn any // JSON string or nil
+}
+
+// adaptiveWant computes the expected read-back values for every row. Because the values are
+// deterministic in |id|, both the parent test and the helper process derive the same map.
+func adaptiveWant() map[int]adaptiveExpected {
+	rows := adaptiveRows()
+	want := make(map[int]adaptiveExpected, len(rows))
 	for _, r := range rows {
 		if r.isNull {
-			_, err := conn.ExecContext(ctx,
-				"insert into adaptive (id, txt, blb, jsn) values (?, ?, ?, ?)",
-				r.id, nil, nil, nil)
-			require.NoError(t, err)
-			want[r.id] = expected{txt: nil, blb: nil, jsn: nil}
+			want[r.id] = adaptiveExpected{txt: nil, blb: nil, jsn: nil}
 			continue
 		}
-
-		txt := smallText(r.id)
+		txt := adaptiveSmallText(r.id)
 		if r.textLarge {
-			txt = largeText(r.id)
+			txt = adaptiveLargeText(r.id)
 		}
-		blb := smallBlob(r.id)
+		blb := adaptiveSmallBlob(r.id)
 		if r.blobLarge {
-			blb = largeBlob(r.id)
+			blb = adaptiveLargeBlob(r.id)
 		}
-		jsn := smallJSON(r.id)
+		jsn := adaptiveSmallJSON(r.id)
 		if r.jsonLarge {
-			jsn = largeJSON(r.id)
+			jsn = adaptiveLargeJSON(r.id)
 		}
+		want[r.id] = adaptiveExpected{txt: txt, blb: blb, jsn: jsn}
+	}
+	return want
+}
 
-		_, err := conn.ExecContext(ctx,
-			"insert into adaptive (id, txt, blb, jsn) values (?, ?, ?, ?)",
-			r.id, txt, blb, jsn)
-		require.NoError(t, err)
-		want[r.id] = expected{txt: txt, blb: blb, jsn: jsn}
+// jsonEqual reports whether two JSON documents are semantically equal, ignoring formatting
+// differences such as whitespace introduced when the server re-serializes a value.
+func jsonEqual(a, b string) (bool, error) {
+	var av, bv any
+	if err := json.Unmarshal([]byte(a), &av); err != nil {
+		return false, fmt.Errorf("unmarshal expected JSON: %w", err)
+	}
+	if err := json.Unmarshal([]byte(b), &bv); err != nil {
+		return false, fmt.Errorf("unmarshal actual JSON: %w", err)
+	}
+	return reflect.DeepEqual(av, bv), nil
+}
+
+// verifyAdaptive reads every row back over |conn| and checks exact round-tripping against
+// |want|. Large fields take the out-of-band ValueContext read path; small fields are inline.
+// Both must produce identical values. It returns an error describing the first mismatch so it
+// can be used both with require (in the parent test) and with an exit code (in the helper
+// process), rather than depending on a *testing.T.
+func verifyAdaptive(ctx context.Context, conn *sql.Conn, want map[int]adaptiveExpected) error {
+	sqlRows, err := conn.QueryContext(ctx, "select id, txt, blb, jsn from adaptive order by id")
+	if err != nil {
+		return fmt.Errorf("query adaptive: %w", err)
 	}
 
-	// verify reads every row back over |conn| and asserts exact round-tripping. Large fields
-	// take the out-of-band ValueContext read path; small fields are inline. Both must produce
-	// identical values.
-	verify := func(t *testing.T, conn *sql.Conn) {
-		sqlRows, err := conn.QueryContext(ctx, "select id, txt, blb, jsn from adaptive order by id")
-		require.NoError(t, err)
-
-		seen := 0
+	seen := 0
+	err = func() (err error) {
+		defer func() {
+			if cerr := sqlRows.Close(); cerr != nil {
+				if err == nil {
+					err = cerr
+				}
+			}
+		}()
 		for sqlRows.Next() {
 			var id int
 			var txt sql.NullString
 			var blb []byte
 			var jsn sql.NullString
-			require.NoError(t, sqlRows.Scan(&id, &txt, &blb, &jsn))
+			if err := sqlRows.Scan(&id, &txt, &blb, &jsn); err != nil {
+				return fmt.Errorf("scan: %w", err)
+			}
 
 			exp, ok := want[id]
-			require.True(t, ok, "unexpected row id %d", id)
+			if !ok {
+				return fmt.Errorf("unexpected row id %d", id)
+			}
 
 			if exp.txt == nil {
-				require.False(t, txt.Valid, "row %d: expected NULL txt", id)
+				if txt.Valid {
+					return fmt.Errorf("row %d: expected NULL txt, got non-NULL", id)
+				}
 			} else {
-				require.True(t, txt.Valid, "row %d: expected non-NULL txt", id)
-				require.Equal(t, exp.txt, txt.String, "row %d: txt mismatch", id)
+				if !txt.Valid {
+					return fmt.Errorf("row %d: expected non-NULL txt", id)
+				}
+				if txt.String != exp.txt.(string) {
+					return fmt.Errorf("row %d: txt mismatch (got len=%d, want len=%d)",
+						id, len(txt.String), len(exp.txt.(string)))
+				}
 			}
 
 			if exp.blb == nil {
-				require.Nil(t, blb, "row %d: expected NULL blb", id)
+				if blb != nil {
+					return fmt.Errorf("row %d: expected NULL blb, got non-NULL", id)
+				}
 			} else {
-				require.Equal(t, exp.blb, blb, "row %d: blb mismatch", id)
+				if !bytes.Equal(blb, exp.blb.([]byte)) {
+					return fmt.Errorf("row %d: blb mismatch (got len=%d, want len=%d)",
+						id, len(blb), len(exp.blb.([]byte)))
+				}
 			}
 
 			if exp.jsn == nil {
-				require.False(t, jsn.Valid, "row %d: expected NULL jsn", id)
+				if jsn.Valid {
+					return fmt.Errorf("row %d: expected NULL jsn, got non-NULL", id)
+				}
 			} else {
-				require.True(t, jsn.Valid, "row %d: expected non-NULL jsn", id)
-				// Compare JSON semantically, since the server re-serializes (e.g. whitespace) it.
-				require.JSONEq(t, exp.jsn.(string), jsn.String, "row %d: jsn mismatch", id)
+				if !jsn.Valid {
+					return fmt.Errorf("row %d: expected non-NULL jsn", id)
+				}
+				eq, err := jsonEqual(exp.jsn.(string), jsn.String)
+				if err != nil {
+					return fmt.Errorf("row %d: %w", id, err)
+				}
+				if !eq {
+					return fmt.Errorf("row %d: jsn mismatch: got %s want %s", id, jsn.String, exp.jsn.(string))
+				}
 			}
 			seen++
 		}
-		require.NoError(t, sqlRows.Err())
-		require.NoError(t, sqlRows.Close())
-		require.Equal(t, len(rows), seen, "expected to read back every inserted row")
-
-		// Also exercise filtered reads that return only a subset, mixing inline and out-of-band
-		// values, to ensure the read path works outside of a full table scan.
-		requireResults(t, conn, "select id from adaptive where id in (2, 8) order by id",
-			[][]any{{2}, {8}})
+		if err := sqlRows.Err(); err != nil {
+			return fmt.Errorf("rows err: %w", err)
+		}
+		return nil
+	}()
+	if err != nil {
+		return err
+	}
+	if want := len(adaptiveRows()); seen != want {
+		return fmt.Errorf("expected to read back %d rows, saw %d", want, seen)
 	}
 
-	// First, read the values back over the original connection.
-	verify(t, conn)
+	// Also exercise a filtered read that returns only a subset, mixing inline and out-of-band
+	// values, to ensure the read path works outside of a full table scan.
+	subRows, err := conn.QueryContext(ctx, "select id from adaptive where id in (2, 8) order by id")
+	if err != nil {
+		return fmt.Errorf("subset query: %w", err)
+	}
+	defer subRows.Close()
+	var gotIDs []int
+	for subRows.Next() {
+		var id int
+		if err := subRows.Scan(&id); err != nil {
+			return fmt.Errorf("subset scan: %w", err)
+		}
+		gotIDs = append(gotIDs, id)
+	}
+	if err := subRows.Err(); err != nil {
+		return fmt.Errorf("subset rows err: %w", err)
+	}
+	if len(gotIDs) != 2 || gotIDs[0] != 2 || gotIDs[1] != 8 {
+		return fmt.Errorf("subset mismatch: got %v want [2 8]", gotIDs)
+	}
+	return nil
+}
 
-	// Now close the connection and the database entirely, then open a fresh sql.DB against the
-	// same directory and re-read. This forces the adaptive values (including out-of-band
-	// addresses) to be reloaded from the on-disk value store rather than served from any
-	// in-memory state held by the original handle.
-	require.NoError(t, conn.Close())
-	require.NoError(t, db.Close())
+// TestAdaptiveEncoding exercises the adaptive encoding read path for TEXT, BLOB, and JSON
+// columns. Dolt stores these "adaptive" types either inline in the row tuple or out-of-band
+// as an address, deciding per-row based on the total tuple size: once a row's inline size
+// exceeds the tuple length target (2048 bytes), the largest adaptive fields are spilled
+// out-of-band. Out-of-band values are returned by the row iterator as values that must be
+// dereferenced against the value store via ValueContext, which is the path rows.go handles.
+//
+// The test creates a table with one column of each adaptive type and inserts rows covering
+// every combination of small (inline) and large (out-of-band) values, plus an all-NULL row,
+// then queries them back and asserts the values round-trip exactly.
+//
+// Every database operation runs in a separate child process, never in this test process:
+//
+//   - The first child writes the table and rows, then verifies them in that same process
+//     (a "warm" read served partly from the process-wide adaptive value cache populated by
+//     the writes).
+//   - The second child re-verifies against a freshly opened database. Because it is a new
+//     process, its adaptive value cache is *cold*, so the out-of-band values must be reloaded
+//     from the on-disk value store. That is the read path we actually want to exercise: a
+//     warm in-process cache would serve the correct values and mask an incorrect on-disk read.
+//
+// Running each step in its own process also means this test process never holds the embedded
+// journal lock, so the second child can open the same directory. This mirrors the os/exec
+// machinery used by the cross-process flock tests.
+func TestAdaptiveEncoding(t *testing.T) {
+	if runTestsAgainstMySQL {
+		t.SkipNow()
+	}
 
-	db2 := openTestDatabaseConnectionAt(t, dir, false)
-	conn2, err := db2.Conn(ctx)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, conn2.Close())
-	})
+	dir := t.TempDir()
 
-	_, err = conn2.ExecContext(ctx, "use testdb")
-	require.NoError(t, err)
+	// Write and warm-verify the initial database in one process, then cold-verify in another.
+	runAdaptiveHelperProcess(t, "TestHelperProcess_WriteAdaptive", dir)
+	runAdaptiveHelperProcess(t, "TestHelperProcess_VerifyAdaptive", dir)
+}
 
-	verify(t, conn2)
+// runAdaptiveHelperProcess re-executes this test binary, running only the named helper test
+// against the database at |dir|. It fails the test if the child exits non-zero, surfacing the
+// child's combined output for diagnosis.
+func runAdaptiveHelperProcess(t *testing.T, name, dir string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^"+name+"$") // #nosec G204 -- test binary
+	cmd.Env = append(os.Environ(),
+		adaptiveHelperEnvKey+"=1",
+		adaptiveHelperDSNEnvKey+"="+adaptiveDSN(dir),
+	)
+	out, err := cmd.CombinedOutput()
+	require.NoErrorf(t, err, "%s failed:\n%s", name, strings.TrimSpace(string(out)))
+}
+
+// adaptiveDSN builds the DSN used to open the embedded database created by TestAdaptiveEncoding,
+// matching the query parameters used by openTestDatabaseConnectionAt.
+func adaptiveDSN(dir string) string {
+	query := url.Values{
+		"commitname":      []string{"Billy Batson"},
+		"commitemail":     []string{"shazam@gmail.com"},
+		"database":        []string{"testdb"},
+		"multistatements": []string{"true"},
+	}
+	dsn := url.URL{Scheme: "file", Path: encodeDir(dir), RawQuery: query.Encode()}
+	return dsn.String()
+}
+
+// openAdaptiveHelperDB opens the embedded database named by the helper DSN environment variable
+// and returns a ready connection. It is used only by the helper-process tests below; on any
+// failure it prints a diagnostic and exits the process non-zero so the parent can observe it.
+func openAdaptiveHelperDB(ctx context.Context) (*sql.DB, *sql.Conn) {
+	dsn := os.Getenv(adaptiveHelperDSNEnvKey)
+	if dsn == "" {
+		fmt.Fprintln(os.Stderr, "missing "+adaptiveHelperDSNEnvKey)
+		os.Exit(2)
+	}
+	db, err := sql.Open(DoltDriverName, dsn)
+	if err != nil {
+		fmt.Printf("ERR: sql.Open: %v\n", err)
+		os.Exit(1)
+	}
+	if err := db.PingContext(ctx); err != nil {
+		fmt.Printf("ERR: Ping: %v\n", err)
+		os.Exit(1)
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		fmt.Printf("ERR: Conn: %v\n", err)
+		os.Exit(1)
+	}
+	return db, conn
+}
+
+// TestHelperProcess_WriteAdaptive is executed in a separate process by TestAdaptiveEncoding. It
+// creates the testdb database and adaptive table, inserts every row, then verifies the values in
+// this same process (a warm read). It only runs when the guard environment variable is set;
+// otherwise it is skipped during normal test runs. On success it prints "OK" and exits 0; on any
+// failure it prints a diagnostic and exits non-zero.
+func TestHelperProcess_WriteAdaptive(t *testing.T) {
+	if os.Getenv(adaptiveHelperEnvKey) != "1" {
+		t.Skip("helper process only")
+	}
+
+	ctx := context.Background()
+	db, conn := openAdaptiveHelperDB(ctx)
+	defer db.Close()
+	defer conn.Close()
+
+	setup := []string{
+		"drop database if exists testdb",
+		"create database testdb",
+		"use testdb",
+		"create table adaptive (id int primary key, txt TEXT, blb BLOB, jsn JSON)",
+	}
+	for _, stmt := range setup {
+		if _, err := conn.ExecContext(ctx, stmt); err != nil {
+			fmt.Printf("ERR: %q: %v\n", stmt, err)
+			t.FailNow()
+		}
+	}
+
+	want := adaptiveWant()
+	for _, r := range adaptiveRows() {
+		exp := want[r.id]
+		if _, err := conn.ExecContext(ctx,
+			"insert into adaptive (id, txt, blb, jsn) values (?, ?, ?, ?)",
+			r.id, exp.txt, exp.blb, exp.jsn); err != nil {
+			fmt.Printf("ERR: insert id=%d: %v\n", r.id, err)
+			t.FailNow()
+		}
+	}
+
+	// Verify the freshly-written database in this same process, while the adaptive value cache
+	// is warm from the writes above.
+	if err := verifyAdaptive(ctx, conn, want); err != nil {
+		fmt.Printf("ERR: warm verify: %v\n", err)
+		t.FailNow()
+	}
+
+	fmt.Println("OK")
+}
+
+// TestHelperProcess_VerifyAdaptive is executed in a separate process by TestAdaptiveEncoding to
+// re-verify the adaptive-encoding rows against a cold process-wide cache. It only runs when the
+// guard environment variable is set; otherwise it is skipped during normal test runs. On success
+// it prints "OK" and exits 0; on any failure it prints a diagnostic and exits non-zero so the
+// parent can surface it via the child's exit status and combined output.
+func TestHelperProcess_VerifyAdaptive(t *testing.T) {
+	if os.Getenv(adaptiveHelperEnvKey) != "1" {
+		t.Skip("helper process only")
+	}
+
+	ctx := context.Background()
+	db, conn := openAdaptiveHelperDB(ctx)
+	defer db.Close()
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "use testdb"); err != nil {
+		fmt.Printf("ERR: use testdb: %v\n", err)
+		t.FailNow()
+	}
+
+	if err := verifyAdaptive(ctx, conn, adaptiveWant()); err != nil {
+		fmt.Printf("ERR: verify: %v\n", err)
+		t.FailNow()
+	}
+
+	fmt.Println("OK")
 }
 
 func TestSleepCancel(t *testing.T) {
