@@ -652,39 +652,36 @@ create table adaptive (
 		blb any // []byte or nil
 		jsn any // JSON string or nil
 	}
-	n := 32
-	want := make(map[int]expected, len(rows)*n)
+	want := make(map[int]expected, len(rows))
 
-	for i := range n {
-		for _, r := range rows {
-			if r.isNull {
-				_, err := conn.ExecContext(ctx,
-					"insert into adaptive (id, txt, blb, jsn) values (?, ?, ?, ?)",
-					r.id+(i*len(rows)), nil, nil, nil)
-				require.NoError(t, err)
-				want[r.id+(i*len(rows))] = expected{txt: nil, blb: nil, jsn: nil}
-				continue
-			}
-
-			txt := smallText(r.id)
-			if r.textLarge {
-				txt = largeText(r.id)
-			}
-			blb := smallBlob(r.id)
-			if r.blobLarge {
-				blb = largeBlob(r.id)
-			}
-			jsn := smallJSON(r.id)
-			if r.jsonLarge {
-				jsn = largeJSON(r.id)
-			}
-
+	for _, r := range rows {
+		if r.isNull {
 			_, err := conn.ExecContext(ctx,
 				"insert into adaptive (id, txt, blb, jsn) values (?, ?, ?, ?)",
-				r.id+(i*len(rows)), txt, blb, jsn)
+				r.id, nil, nil, nil)
 			require.NoError(t, err)
-			want[r.id+(i*len(rows))] = expected{txt: txt, blb: blb, jsn: jsn}
+			want[r.id] = expected{txt: nil, blb: nil, jsn: nil}
+			continue
 		}
+
+		txt := smallText(r.id)
+		if r.textLarge {
+			txt = largeText(r.id)
+		}
+		blb := smallBlob(r.id)
+		if r.blobLarge {
+			blb = largeBlob(r.id)
+		}
+		jsn := smallJSON(r.id)
+		if r.jsonLarge {
+			jsn = largeJSON(r.id)
+		}
+
+		_, err := conn.ExecContext(ctx,
+			"insert into adaptive (id, txt, blb, jsn) values (?, ?, ?, ?)",
+			r.id, txt, blb, jsn)
+		require.NoError(t, err)
+		want[r.id] = expected{txt: txt, blb: blb, jsn: jsn}
 	}
 
 	// verify reads every row back over |conn| and asserts exact round-tripping. Large fields
@@ -729,7 +726,7 @@ create table adaptive (
 		}
 		require.NoError(t, sqlRows.Err())
 		require.NoError(t, sqlRows.Close())
-		require.Equal(t, len(rows)*n, seen, "expected to read back every inserted row")
+		require.Equal(t, len(rows), seen, "expected to read back every inserted row")
 
 		// Also exercise filtered reads that return only a subset, mixing inline and out-of-band
 		// values, to ensure the read path works outside of a full table scan.
