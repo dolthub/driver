@@ -4,9 +4,9 @@ go 1.26.2
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260708205203-e3803363752b
+	github.com/dolthub/dolt/go v0.40.5-0.20260714184413-7c47d8269368
 	github.com/dolthub/eventsapi_schema v0.0.0-20260310172945-37a9265ade69
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260708201314-00aba113db57
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260713210757-6d01d00bbbf3
 	github.com/dolthub/vitess v0.0.0-20260624214226-81d034e0fde8
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
@@ -145,7 +145,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.0 // indirect
-	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20240205201215-2c58cdc269a3 // indirect
 	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/net v0.54.0 // indirect
