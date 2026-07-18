@@ -4,9 +4,9 @@ go 1.26.2
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260715222552-6bea62fec1d6
-	github.com/dolthub/eventsapi_schema v0.0.0-20260310172945-37a9265ade69
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260715210958-36c4fed9afa6
+	github.com/dolthub/dolt/go v0.40.5-0.20260717235950-9e80d3aa2cf8
+	github.com/dolthub/eventsapi_schema v0.0.0-20260715220557-d9b4a1c6b4d4
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260717195005-e77c2d65f1a5
 	github.com/dolthub/vitess v0.0.0-20260624214226-81d034e0fde8
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
@@ -148,7 +148,7 @@ require (
 	golang.org/x/crypto v0.52.0 // indirect
 	golang.org/x/exp v0.0.0-20240205201215-2c58cdc269a3 // indirect
 	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/net v0.54.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.45.0 // indirect
