@@ -4,10 +4,10 @@ go 1.26.5
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20260902090248-362a86528a8a
+	github.com/dolthub/dolt/go v0.40.5-0.20260904203559-d7cb179ac4fb
 	github.com/dolthub/eventsapi_schema v0.0.0-20260715220557-d9b4a1c6b4d4
-	github.com/dolthub/go-mysql-server v0.20.1-0.20260901230631-da4d8ec733de
-	github.com/dolthub/vitess v0.0.0-20260901210329-5364bf844382
+	github.com/dolthub/go-mysql-server v0.20.1-0.20260904191717-d8c10710471f
+	github.com/dolthub/vitess v0.0.0-20260904184517-52208380f008
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
 	gorm.io/driver/mysql v1.5.6
