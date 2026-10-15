@@ -51,7 +51,7 @@ func newLocalContext(se *engine.SqlEngine, ctx context.Context) (*gmssql.Context
 	if newLocalContextForConnector != nil {
 		return newLocalContextForConnector(se, ctx)
 	}
-	baseSession := gmssql.NewBaseSession()
+	baseSession := gmssql.NewBaseSessionWithVariables(se.GetUnderlyingEngine().Variables())
 	doltSession, err := se.NewDoltSession(ctx, baseSession)
 	if err != nil {
 		return nil, err

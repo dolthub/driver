@@ -23,6 +23,7 @@ import (
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
+	"github.com/dolthub/dolt/go/libraries/doltcore/sqle"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 )
@@ -57,10 +58,7 @@ type doltDriver struct {
 // needing to take actual filesystem locks. Production code should leave this nil.
 var openSqlEngineForConnector func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error)
 
-// openSem is a process-level semaphore that serializes openSqlEngine calls.
-// GMS uses global mutable state (system variables, status variables) during
-// engine initialization that is not safe for concurrent access, so we must
-// ensure at most one open is in-flight at a time.
+// openSem serializes embedded engine opens across connectors.
 var openSem = make(chan struct{}, 1)
 
 func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
@@ -71,7 +69,6 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-
 	if openSqlEngineForConnector != nil {
 		return openSqlEngineForConnector(ctx, cfg, fs, dir, version, seCfg)
 	}
@@ -81,6 +78,9 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	if err != nil {
 		return nil, err
 	}
+	// A retry starts with a fresh bundle, which NewSqlEngine adopts. The
+	// driver does not load persisted global variables from Dolt config.
+	seCfg.EngineVariables = sqle.NewEngineVariables()
 
 	go emitUsageEvent(context.Background(), mrEnv)
 	se, err := engine.NewSqlEngine(ctx, mrEnv, seCfg)
