@@ -23,6 +23,8 @@ import (
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
 	"github.com/dolthub/dolt/go/libraries/doltcore/env"
+	"github.com/dolthub/dolt/go/libraries/doltcore/sqle"
+	"github.com/dolthub/dolt/go/libraries/doltcore/sqle/dsess"
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 )
@@ -57,10 +59,7 @@ type doltDriver struct {
 // needing to take actual filesystem locks. Production code should leave this nil.
 var openSqlEngineForConnector func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error)
 
-// openSem is a process-level semaphore that serializes openSqlEngine calls.
-// GMS uses global mutable state (system variables, status variables) during
-// engine initialization that is not safe for concurrent access, so we must
-// ensure at most one open is in-flight at a time.
+// openSem serializes embedded engine opens across connectors.
 var openSem = make(chan struct{}, 1)
 
 func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
@@ -71,6 +70,9 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+	// A retry starts with a fresh bundle, and all bootstrap work for this open
+	// uses the same bundle that NewSqlEngine will adopt.
+	seCfg.EngineVariables = sqle.NewEngineVariables()
 
 	if openSqlEngineForConnector != nil {
 		return openSqlEngineForConnector(ctx, cfg, fs, dir, version, seCfg)
@@ -80,6 +82,29 @@ func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.F
 	mrEnv, err := LoadMultiEnvFromDir(ctx, cfg, fs, ".", version, seCfg.DBLoadParams)
 	if err != nil {
 		return nil, err
+	}
+	if err := mrEnv.Iter(func(name string, _ *env.DoltEnv) (bool, error) {
+		dsess.DefineSystemVariablesForDBInRegistry(seCfg.EngineVariables.System, name)
+		return false, nil
+	}); err != nil {
+		mrEnv.Close(ctx)
+		return nil, err
+	}
+	if dEnv := mrEnv.GetEnv(mrEnv.GetFirstDatabase()); dEnv != nil {
+		if err := dsess.InitPersistedSystemVarsWithRegistry(seCfg.EngineVariables.System, dEnv); err != nil {
+			mrEnv.Close(ctx)
+			return nil, err
+		}
+	} else {
+		// An empty data directory can still have persisted globals in its
+		// root configuration, before any database has been created.
+		persisted := config.NewPrefixConfig(mrEnv.Config(), env.SqlServerGlobalsPrefix)
+		definitions, _, err := dsess.SystemVariablesInConfigWithRegistry(seCfg.EngineVariables.System, persisted)
+		if err != nil {
+			mrEnv.Close(ctx)
+			return nil, err
+		}
+		seCfg.EngineVariables.System.AddSystemVariables(definitions)
 	}
 
 	go emitUsageEvent(context.Background(), mrEnv)
