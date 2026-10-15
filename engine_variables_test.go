@@ -17,6 +17,7 @@ package embedded
 import (
 	"context"
 	"database/sql"
+	"sync"
 	"testing"
 
 	gmssql "github.com/dolthub/go-mysql-server/sql"
@@ -25,7 +26,7 @@ import (
 
 func TestConnectorEngineVariableIsolation(t *testing.T) {
 	ctx := context.Background()
-	open := func() (*Connector, *sql.DB, *sql.Conn) {
+	open := func() (*Connector, *sql.DB) {
 		connector, err := NewConnector(Config{
 			Directory:   t.TempDir(),
 			CommitName:  "test",
@@ -37,10 +38,7 @@ func TestConnectorEngineVariableIsolation(t *testing.T) {
 			require.NoError(t, db.Close())
 			require.NoError(t, connector.Close())
 		})
-		conn, err := db.Conn(ctx)
-		require.NoError(t, err)
-		t.Cleanup(func() { require.NoError(t, conn.Close()) })
-		return connector, db, conn
+		return connector, db
 	}
 	getInt := func(conn *sql.Conn, query string) int64 {
 		var value int64
@@ -48,8 +46,25 @@ func TestConnectorEngineVariableIsolation(t *testing.T) {
 		return value
 	}
 
-	a, dbA, connA := open()
-	b, _, connB := open()
+	a, dbA := open()
+	b, dbB := open()
+	var conns [2]*sql.Conn
+	var openErrs [2]error
+	var wg sync.WaitGroup
+	for i, db := range []*sql.DB{dbA, dbB} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conns[i], openErrs[i] = db.Conn(ctx)
+		}()
+	}
+	wg.Wait()
+	for i := range conns {
+		require.NoError(t, openErrs[i])
+		conn := conns[i]
+		t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	}
+	connA, connB := conns[0], conns[1]
 	require.NotSame(t, a.se.GetUnderlyingEngine().Variables(), b.se.GetUnderlyingEngine().Variables())
 	for _, conn := range []*sql.Conn{connA, connB} {
 		require.NoError(t, conn.Raw(func(raw any) error {
