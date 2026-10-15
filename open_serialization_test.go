@@ -16,7 +16,6 @@ package embedded
 
 import (
 	"context"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,77 +24,18 @@ import (
 	"github.com/dolthub/dolt/go/libraries/utils/config"
 	"github.com/dolthub/dolt/go/libraries/utils/filesys"
 	gms "github.com/dolthub/go-mysql-server/sql"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestOpenSemSerializesConcurrentOpens verifies that concurrent openSqlEngine
-// calls from different connectors are serialized by the process-level semaphore.
-func TestOpenSemSerializesConcurrentOpens(t *testing.T) {
-	var concurrent int32
-	var maxConcurrent int32
-
-	prev := openSqlEngineForConnector
-	t.Cleanup(func() { openSqlEngineForConnector = prev })
-	openSqlEngineForConnector = func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
-		cur := atomic.AddInt32(&concurrent, 1)
-		defer atomic.AddInt32(&concurrent, -1)
-		for {
-			old := atomic.LoadInt32(&maxConcurrent)
-			if cur <= old || atomic.CompareAndSwapInt32(&maxConcurrent, old, cur) {
-				break
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-		return &engine.SqlEngine{}, nil
-	}
-
-	prevNewCtx := newLocalContextForConnector
-	t.Cleanup(func() { newLocalContextForConnector = prevNewCtx })
-	newLocalContextForConnector = func(se *engine.SqlEngine, ctx context.Context) (*gms.Context, error) {
-		return &gms.Context{}, nil
-	}
-
-	dir := t.TempDir()
-
-	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			c, err := NewConnector(Config{
-				Directory:   dir,
-				CommitName:  "test",
-				CommitEmail: "test@test.com",
-			})
-			assert.NoError(t, err)
-			if err != nil {
-				return
-			}
-			conn, err := c.Connect(context.Background())
-			assert.NoError(t, err)
-			assert.NotNil(t, conn)
-			_ = c.Close()
-		}()
-	}
-	wg.Wait()
-
-	assert.Equal(t, int32(1), atomic.LoadInt32(&maxConcurrent),
-		"expected at most 1 concurrent openSqlEngine call")
-}
-
-// TestOpenSemRespectsContextCancellation verifies that a caller blocked on the
-// semaphore returns ctx.Err() when the context is cancelled.
-func TestOpenSemRespectsContextCancellation(t *testing.T) {
-	prev := openSqlEngineForConnector
-	t.Cleanup(func() { openSqlEngineForConnector = prev })
-
-	// acquired signals that the first goroutine holds the semaphore.
-	acquired := make(chan struct{})
-	// Install a stub that signals acquisition, then blocks until released.
+// Independent connectors must be able to enter engine initialization together.
+func TestIndependentConnectorsOpenConcurrently(t *testing.T) {
+	entered := make(chan *engine.SqlEngineConfig, 2)
 	release := make(chan struct{})
+
+	prev := openSqlEngineForConnector
+	t.Cleanup(func() { openSqlEngineForConnector = prev })
 	openSqlEngineForConnector = func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
-		close(acquired)
+		entered <- seCfg
 		<-release
 		return &engine.SqlEngine{}, nil
 	}
@@ -106,32 +46,96 @@ func TestOpenSemRespectsContextCancellation(t *testing.T) {
 		return &gms.Context{}, nil
 	}
 
-	dir := t.TempDir()
-	doltCfg := config.NewMapConfig(map[string]string{
-		config.UserNameKey:  "test",
-		config.UserEmailKey: "test@test.com",
-	})
-	seCfg := &engine.SqlEngineConfig{}
+	connectors := make([]*Connector, 2)
+	for i := range connectors {
+		var err error
+		connectors[i], err = NewConnector(Config{
+			Directory:   t.TempDir(),
+			CommitName:  "test",
+			CommitEmail: "test@test.com",
+		})
+		require.NoError(t, err)
+	}
+	results := make(chan error, len(connectors))
+	for _, connector := range connectors {
+		go func() {
+			conn, err := connector.Connect(context.Background())
+			if err == nil {
+				err = conn.Close()
+			}
+			if closeErr := connector.Close(); err == nil {
+				err = closeErr
+			}
+			results <- err
+		}()
+	}
 
-	// Start a goroutine that holds the semaphore.
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		_, _ = openSqlEngine(context.Background(), doltCfg, filesys.LocalFS, dir, "0.40.17", seCfg)
-	}()
-
-	// Wait until the first goroutine has actually acquired the semaphore.
-	<-acquired
-
-	// Second call with a short timeout should fail with context error.
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	_, err := openSqlEngine(ctx, doltCfg, filesys.LocalFS, dir, "0.40.17", seCfg)
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.DeadlineExceeded)
-
+	var configs [2]*engine.SqlEngineConfig
+	overlapped := true
+waitForOpens:
+	for i := range configs {
+		select {
+		case configs[i] = <-entered:
+		case <-time.After(10 * time.Second):
+			overlapped = false
+			break waitForOpens
+		}
+	}
 	close(release)
-	wg.Wait()
+	for range connectors {
+		require.NoError(t, <-results)
+	}
+	require.True(t, overlapped, "independent engine opens did not overlap")
+	require.NotNil(t, configs[0].EngineVariables)
+	require.NotNil(t, configs[1].EngineVariables)
+	require.NotSame(t, configs[0].EngineVariables, configs[1].EngineVariables)
+}
+
+// A second caller of the same connector can cancel while its first open is in progress.
+func TestConnectorOpenWaiterCancellation(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+
+	prev := openSqlEngineForConnector
+	t.Cleanup(func() { openSqlEngineForConnector = prev })
+	openSqlEngineForConnector = func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
+		if calls.Add(1) == 1 {
+			close(entered)
+		}
+		<-release
+		return &engine.SqlEngine{}, nil
+	}
+
+	prevNewCtx := newLocalContextForConnector
+	t.Cleanup(func() { newLocalContextForConnector = prevNewCtx })
+	newLocalContextForConnector = func(se *engine.SqlEngine, ctx context.Context) (*gms.Context, error) {
+		return &gms.Context{}, nil
+	}
+
+	connector, err := NewConnector(Config{
+		Directory:   t.TempDir(),
+		CommitName:  "test",
+		CommitEmail: "test@test.com",
+	})
+	require.NoError(t, err)
+	firstResult := make(chan error, 1)
+	go func() {
+		conn, err := connector.Connect(context.Background())
+		if err == nil {
+			err = conn.Close()
+		}
+		firstResult <- err
+	}()
+	<-entered
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, waitErr := connector.Connect(ctx)
+	close(release)
+	firstErr := <-firstResult
+	require.ErrorIs(t, waitErr, context.DeadlineExceeded)
+	require.NoError(t, firstErr)
+	require.Equal(t, int32(1), calls.Load())
+	require.NoError(t, connector.Close())
 }

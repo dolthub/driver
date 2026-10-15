@@ -59,16 +59,9 @@ type doltDriver struct {
 // needing to take actual filesystem locks. Production code should leave this nil.
 var openSqlEngineForConnector func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error)
 
-// openSem serializes embedded engine opens across connectors.
-var openSem = make(chan struct{}, 1)
-
 func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
-	// Acquire the process-level open semaphore, respecting context cancellation.
-	select {
-	case openSem <- struct{}{}:
-		defer func() { <-openSem }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 	// A retry starts with a fresh bundle, and all bootstrap work for this open
 	// uses the same bundle that NewSqlEngine will adopt.
