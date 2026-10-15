@@ -19,6 +19,8 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"errors"
+	"path/filepath"
+	"sync"
 
 	"github.com/dolthub/dolt/go/cmd/dolt/commands/engine"
 	"github.com/dolthub/dolt/go/cmd/dolt/errhand"
@@ -58,17 +60,71 @@ type doltDriver struct {
 // needing to take actual filesystem locks. Production code should leave this nil.
 var openSqlEngineForConnector func(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error)
 
-// openSem serializes embedded engine opens across connectors.
-var openSem = make(chan struct{}, 1)
+// dirOpenLocks serializes engine opens of one data directory, since those
+// opens contend for the same database files and locks. Opens of different
+// directories proceed concurrently.
+var dirOpenLocks = struct {
+	mu    sync.Mutex
+	locks map[string]*dirOpenLock
+}{locks: make(map[string]*dirOpenLock)}
 
-func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
-	// Acquire the process-level open semaphore, respecting context cancellation.
+type dirOpenLock struct {
+	sem  chan struct{}
+	refs int
+}
+
+// lockDirForOpen waits for exclusive open access to dir, or for ctx to end.
+// The returned func releases it.
+func lockDirForOpen(ctx context.Context, dir string) (func(), error) {
+	key := canonicalDir(dir)
+	dirOpenLocks.mu.Lock()
+	l := dirOpenLocks.locks[key]
+	if l == nil {
+		l = &dirOpenLock{sem: make(chan struct{}, 1)}
+		dirOpenLocks.locks[key] = l
+	}
+	l.refs++
+	dirOpenLocks.mu.Unlock()
+
+	unref := func() {
+		dirOpenLocks.mu.Lock()
+		l.refs--
+		if l.refs == 0 {
+			delete(dirOpenLocks.locks, key)
+		}
+		dirOpenLocks.mu.Unlock()
+	}
 	select {
-	case openSem <- struct{}{}:
-		defer func() { <-openSem }()
+	case l.sem <- struct{}{}:
+		return func() {
+			<-l.sem
+			unref()
+		}, nil
 	case <-ctx.Done():
+		unref()
 		return nil, ctx.Err()
 	}
+}
+
+// canonicalDir names dir so that different spellings of one directory share a
+// lock. It falls back to the cleaned path when dir cannot be resolved.
+func canonicalDir(dir string) string {
+	if abs, err := filepath.Abs(dir); err == nil {
+		dir = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = resolved
+	}
+	return filepath.Clean(dir)
+}
+
+func openSqlEngine(ctx context.Context, cfg config.ReadWriteConfig, fs filesys.Filesys, dir, version string, seCfg *engine.SqlEngineConfig) (*engine.SqlEngine, error) {
+	unlock, err := lockDirForOpen(ctx, dir)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
 	if openSqlEngineForConnector != nil {
 		return openSqlEngineForConnector(ctx, cfg, fs, dir, version, seCfg)
 	}
