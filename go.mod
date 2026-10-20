@@ -4,12 +4,13 @@ go 1.26.5
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20261020083955-d9ea8fa0dc3a
+	github.com/dolthub/dolt/go v0.40.5-0.20261020104547-5f8ce2a2a271
 	github.com/dolthub/eventsapi_schema v0.0.0-20260715220557-d9b4a1c6b4d4
-	github.com/dolthub/go-mysql-server v0.20.1-0.20261016230655-239e0ad6b2f9
+	github.com/dolthub/go-mysql-server v0.20.1-0.20261020103846-9f4a596182d7
 	github.com/dolthub/vitess v0.0.0-20261014211039-3e903c0f05d3
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/sync v0.22.0
 	gorm.io/driver/mysql v1.5.6
 	gorm.io/gorm v1.25.10
 )
@@ -149,7 +150,6 @@ require (
 	golang.org/x/mod v0.38.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
-	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260708182218-49f421fb7959 // indirect
 	golang.org/x/term v0.45.0 // indirect
