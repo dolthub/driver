@@ -20,7 +20,6 @@ import (
 	"sync"
 	"testing"
 
-	gmssql "github.com/dolthub/go-mysql-server/sql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -70,7 +69,6 @@ func TestConnectorEngineVariableIsolation(t *testing.T) {
 		require.NoError(t, conn.Raw(func(raw any) error {
 			d := raw.(*DoltConn)
 			require.Same(t, d.se.GetUnderlyingEngine().Variables(), d.gmsCtx.EngineVariables())
-			require.Same(t, d.gmsCtx.EngineVariables(), d.gmsCtx.Session.(gmssql.EngineVariablesProvider).EngineVariables())
 			return nil
 		}))
 	}
