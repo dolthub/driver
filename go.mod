@@ -4,9 +4,9 @@ go 1.27.3
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20261109075455-344baafcf323
+	github.com/dolthub/dolt/go v0.40.5-0.20261110082320-c49a2627a795
 	github.com/dolthub/eventsapi_schema v0.0.0-20260715220557-d9b4a1c6b4d4
-	github.com/dolthub/go-mysql-server v0.20.1-0.20261108101640-6a40fc274d10
+	github.com/dolthub/go-mysql-server v0.20.1-0.20261109194409-c57d5b4c16df
 	github.com/dolthub/vitess v0.0.0-20261106002823-dae4b00ae0a4
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/stretchr/testify v1.11.1
@@ -71,7 +71,7 @@ require (
 	github.com/dolthub/go-icu-regex v0.0.0-20260610153742-72563bc7ca83 // indirect
 	github.com/dolthub/gozstd v0.0.0-20240423170813-23a2903bca63 // indirect
 	github.com/dolthub/ishell v0.0.0-20260414231531-5f031e3e9037 // indirect
-	github.com/dolthub/jsonpath v0.0.2-0.20261015203105-2af4aa8c81af // indirect
+	github.com/dolthub/jsonpath v0.0.2-0.20261106005357-131d88a5ca62 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/edsrzf/mmap-go v1.2.0 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
