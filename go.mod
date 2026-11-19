@@ -4,8 +4,8 @@ go 1.27.3
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1
-	github.com/dolthub/dolt/go v0.40.5-0.20261119004007-c13bc9165e03
-	github.com/dolthub/eventsapi_schema v0.0.0-20260715220557-d9b4a1c6b4d4
+	github.com/dolthub/dolt/go v0.40.5-0.20261119223208-91a5e620fdba
+	github.com/dolthub/eventsapi_schema v0.0.0-20261119125135-6b30707d614f
 	github.com/dolthub/go-mysql-server v0.20.1-0.20261117224833-5f6f7cc0e2a4
 	github.com/dolthub/vitess v0.0.0-20261117013301-e1181e696004
 	github.com/go-sql-driver/mysql v1.9.3
@@ -101,7 +101,7 @@ require (
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/juju/gnuflag v1.0.0 // indirect
 	github.com/kch42/buzhash v0.0.0-20160816060738-9bdec3dec7c6 // indirect
-	github.com/klauspost/compress v1.18.0 // indirect
+	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.6 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lestrrat-go/strftime v1.2.0 // indirect
